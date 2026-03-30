@@ -10,11 +10,13 @@ use futures::StreamExt;
 use hyli_modules::{log_error, log_warn};
 
 use super::{
-    storage::{LaneEntryMetadata, MetadataOrMissingHash, Storage},
+    storage::{LaneEntryMetadata, MetadataOrMissingHash},
     DisseminationEvent, ValidatorDAG,
 };
 use anyhow::{bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
+use hyli_model::{ArcBorsh, ArcSignedBlock};
+use std::sync::Arc;
 use tracing::{debug, error, info, trace, warn};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
@@ -43,8 +45,9 @@ impl super::Mempool {
         lane_id: &LaneId,
         sender_validator: &ValidatorPublicKey,
         signatures: Vec<ValidatorDAG>,
-        data_proposal: DataProposal,
+        data_proposal: impl Into<Arc<DataProposal>>,
     ) -> Result<()> {
+        let data_proposal = data_proposal.into();
         debug!("SyncReply from validator {sender_validator}");
 
         self.metrics
@@ -86,7 +89,7 @@ impl super::Mempool {
         &mut self,
         lane_id: LaneId,
         signatures: Vec<ValidatorDAG>,
-        data_proposal: DataProposal,
+        data_proposal: Arc<DataProposal>,
         dp_hash: DataProposalHash,
     ) -> Result<()> {
         // We don't check if we already have stored the DP just in case
@@ -154,7 +157,7 @@ impl super::Mempool {
         &mut self,
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
-    ) -> Option<(Vec<ValidatorDAG>, DataProposal)> {
+    ) -> Option<(Vec<ValidatorDAG>, Arc<DataProposal>)> {
         if let Some((signatures, data_proposal)) = self
             .buffered_entries
             .get_mut(lane_id)
@@ -167,7 +170,7 @@ impl super::Mempool {
             self.lanes.get_metadata_by_hash(lane_id, dp_hash),
             self.lanes.get_dp_by_hash(lane_id, dp_hash),
         ) {
-            return Some((metadata.signatures, data_proposal));
+            return Some((metadata.signatures, data_proposal.into()));
         }
 
         None
@@ -269,7 +272,7 @@ impl super::Mempool {
         expected_top: &DataProposalHash,
         lane_size: LaneBytesSize,
         signatures: Vec<ValidatorDAG>,
-        data_proposal: DataProposal,
+        data_proposal: Arc<DataProposal>,
     ) -> Result<Option<(DataProposalHash, LaneBytesSize)>> {
         let lane_operator = lane_id.operator();
         let dp_hash = data_proposal.hashed();
@@ -448,7 +451,7 @@ impl super::Mempool {
     async fn get_full_data_for_signed_block(
         &mut self,
         buc: &BlockUnderConstruction,
-    ) -> Result<Vec<(LaneId, Vec<DataProposal>)>> {
+    ) -> Result<Vec<(LaneId, Vec<ArcBorsh<DataProposal>>)>> {
         let mut result = vec![];
 
         for (lane_id, to_hash, _, _) in buc.ccp.consensus_proposal.cut.iter() {
@@ -469,9 +472,8 @@ impl super::Mempool {
 
             while let Some(entry) = entries.next().await {
                 match entry {
-                    Ok(EntryOrMissingHash::Entry(_, mut dp)) => {
-                        dp.remove_proofs();
-                        dps.push(dp);
+                    Ok(EntryOrMissingHash::Entry(_, dp)) => {
+                        dps.push(ArcBorsh::new(dp));
                     }
                     Ok(EntryOrMissingHash::MissingHash(hash)) => {
                         bail!("Unexpected missing data proposal {hash} for lane {lane_id}");
@@ -556,7 +558,7 @@ impl super::Mempool {
         }
 
         self.bus
-            .send(MempoolBlockEvent::BuiltSignedBlock(SignedBlock {
+            .send(MempoolBlockEvent::BuiltSignedBlock(ArcSignedBlock {
                 data_proposals: block_data,
                 certificate: buc.ccp.certificate.clone(),
                 consensus_proposal: buc.ccp.consensus_proposal.clone(),
@@ -799,7 +801,7 @@ pub mod test {
                 assert_eq!(sb.consensus_proposal.cut, cut);
                 assert_eq!(
                     sb.data_proposals,
-                    vec![(LaneId::new(key.clone()), vec![dp_orig])]
+                    vec![(LaneId::new(key.clone()), vec![dp_orig.into()])]
                 );
             }
         );
@@ -928,7 +930,10 @@ pub mod test {
                 assert_eq!(sb.consensus_proposal.cut, cut);
                 assert_eq!(
                     sb.data_proposals,
-                    vec![(LaneId::new(key.clone()), vec![dp_orig, dp_orig2, dp_orig3])]
+                    vec![(
+                        LaneId::new(key.clone()),
+                        vec![dp_orig.into(), dp_orig2.into(), dp_orig3.into()]
+                    )]
                 );
             }
         );
@@ -1109,11 +1114,17 @@ pub mod test {
                 assert_eq!(signed_block.data_proposals.len(), 2);
                 assert_eq!(
                     signed_block.data_proposals[0],
-                    (LaneId::new(crypto1.validator_pubkey().clone()), vec![dp1, dp2])
+                    (
+                        LaneId::new(crypto1.validator_pubkey().clone()),
+                        vec![dp1.into(), dp2.into()]
+                    )
                 );
                 assert_eq!(
                     signed_block.data_proposals[1],
-                    (LaneId::new(crypto2.validator_pubkey().clone()), vec![dp3, dp4])
+                    (
+                        LaneId::new(crypto2.validator_pubkey().clone()),
+                        vec![dp3.into(), dp4.into()]
+                    )
                 );
             }
         );
@@ -1224,7 +1235,8 @@ pub mod test {
         let dp_c_hash = dp_c.hashed();
         let vote_c = peer_crypto.sign((dp_c_hash.clone(), dp_c_size))?;
         ctx.mempool
-            .on_hashed_data_proposal(&lane_id, dp_c, vote_c)?;
+            .on_hashed_data_proposal(&lane_id, dp_c, vote_c)
+            .await?;
 
         // C is not yet storable because B is missing.
         assert!(ctx
@@ -1312,7 +1324,8 @@ pub mod test {
         // Receive C first -> buffered because parent B is unknown.
         let vote_c = peer_crypto.sign((dp_c_hash.clone(), dp_c_cumul_size))?;
         ctx.mempool
-            .on_hashed_data_proposal(&lane_id, dp_c, vote_c)?;
+            .on_hashed_data_proposal(&lane_id, dp_c, vote_c)
+            .await?;
 
         // Commit slot 1 at A, then slot 2 at C.
         ctx.process_cut_with_dp(

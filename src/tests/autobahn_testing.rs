@@ -613,7 +613,7 @@ async fn mempool_fail_to_vote_on_fork() {
         _ => panic!("Expected DataProposal message"),
     };
 
-    assert_eq!(dp1, dp1_check);
+    assert_eq!(dp1_check, dp1);
 
     join_all(
         [
@@ -711,7 +711,7 @@ async fn mempool_fail_to_vote_on_fork() {
         .create_net_message(MempoolNetMessage::DataProposal(
             node1.mempool_ctx.own_lane(),
             dp_fork_3.hashed(),
-            dp_fork_3.clone(),
+            dp_fork_3.clone().into(),
             node1
                 .mempool_ctx
                 .sign_data((dp_fork_3.hashed(), cumul_size))

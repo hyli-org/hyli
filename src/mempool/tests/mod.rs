@@ -17,6 +17,7 @@ use crate::mempool::storage::LaneEntryMetadata;
 use crate::model;
 use crate::model::DataProposalParent;
 use crate::p2p::network::NetMessage;
+use crate::shared_storage::{DataProposalDurability, NullDurabilityBackend};
 use crate::utils::conf::Conf;
 use crate::{
     bus::dont_use_this::get_receiver,
@@ -77,6 +78,7 @@ impl MempoolTestCtx {
                 .expect("Failed to build DisseminationManager");
 
         // Initialize Mempool
+        let durability = DataProposalDurability::new_in_memory(Arc::new(NullDurabilityBackend));
         (
             Mempool {
                 bus,
@@ -84,6 +86,7 @@ impl MempoolTestCtx {
                 conf: SharedConf::default(),
                 crypto: Arc::new(crypto),
                 metrics: MempoolMetrics::global(),
+                durability,
                 lanes,
                 inner: MempoolStore::default(),
             },
@@ -385,7 +388,7 @@ impl MempoolTestCtx {
     pub fn last_lane_entry(
         &self,
         lane_id: &LaneId,
-    ) -> ((LaneEntryMetadata, DataProposal), DataProposalHash) {
+    ) -> ((LaneEntryMetadata, Arc<DataProposal>), DataProposalHash) {
         let last_dp_hash = self.current_hash(lane_id).unwrap();
         let last_metadata = self
             .mempool
@@ -927,7 +930,7 @@ async fn test_sync_reply_buffered_without_buc() -> Result<()> {
             .crypto
             .sign((dp1.hashed(), cumul_size1))
             .expect("should sign")],
-        dp1.clone(),
+        dp1.clone().into(),
     ))?;
     let handle = ctx.mempool.handle_net_message(signed_msg).await;
     assert_ok!(handle, "Should handle net message");
@@ -994,7 +997,7 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
                 .crypto
                 .sign((dp.hashed(), size))
                 .expect("should sign")],
-            dp,
+            dp.into(),
         ))?;
         let handle = ctx.mempool.handle_net_message(signed_msg).await;
         assert_ok!(handle, "Should handle net message");
@@ -1009,7 +1012,7 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
             .crypto
             .sign((dp_other.hashed(), other_size))
             .expect("should sign")],
-        dp_other.clone(),
+        dp_other.clone().into(),
     ))?;
     let handle = ctx.mempool.handle_net_message(signed_msg).await;
     assert_ok!(handle, "Should handle net message");
@@ -1040,7 +1043,7 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
             .crypto
             .sign((dp3.hashed(), cumul_size3))
             .expect("should sign")],
-        dp3.clone(),
+        dp3.clone().into(),
     ))?;
     let handle = ctx.mempool.handle_net_message(signed_msg).await;
     assert_ok!(handle, "Should handle net message");
@@ -1127,7 +1130,7 @@ async fn test_sync_reply_materialize_holes_consumes_buffered_latest_cut() -> Res
                 .crypto
                 .sign((dp.hashed(), size))
                 .expect("should sign")],
-            dp,
+            dp.into(),
         ))?;
         let handle = ctx.mempool.handle_net_message(signed_msg).await;
         assert_ok!(handle, "Should handle net message");
@@ -1265,7 +1268,8 @@ async fn test_buc_correctly_filled_via_async_verify_tx_path() -> Result<()> {
         LaneBytesSize(dp_parent.estimate_size() as u64),
     ))?;
     ctx.mempool
-        .on_hashed_data_proposal(&lane_id, dp_parent.clone(), parent_vote)?;
+        .on_hashed_data_proposal(&lane_id, dp_parent.clone(), parent_vote)
+        .await?;
 
     ctx.handle_processed_data_proposals().await;
 
@@ -1285,11 +1289,14 @@ async fn test_buc_correctly_filled_via_async_verify_tx_path() -> Result<()> {
     )
     .await?;
 
-    ctx.mempool.on_processed_data_proposal(
-        lane_id.clone(),
-        DataProposalVerdict::Vote,
-        dp_child.clone(),
-    )?;
+    ctx.mempool
+        .on_processed_data_proposal(
+            lane_id.clone(),
+            DataProposalVerdict::Vote,
+            dp_child.clone(),
+            true,
+        )
+        .await?;
 
     ctx.process_cut_with_dp(
         peer_crypto.validator_pubkey(),
@@ -1466,11 +1473,14 @@ async fn test_processed_dp_stored_when_tip_is_itself_after_clean() -> Result<()>
     assert!(ctx.mempool.lanes.contains(&lane_id, &dp1_hash));
 
     // When processing finishes, DP2 is stored even though its parent is missing.
-    ctx.mempool.on_processed_data_proposal(
-        lane_id.clone(),
-        DataProposalVerdict::Vote,
-        dp2.clone(),
-    )?;
+    ctx.mempool
+        .on_processed_data_proposal(
+            lane_id.clone(),
+            DataProposalVerdict::Vote,
+            dp2.clone(),
+            true,
+        )
+        .await?;
 
     assert!(ctx.mempool.lanes.contains(&lane_id, &dp2_hash));
 
@@ -1549,7 +1559,13 @@ async fn test_processed_dp_fails_when_tip_moved_past_it() -> Result<()> {
     // Processing DP2 now should fail because tip moved past it.
     assert!(ctx
         .mempool
-        .on_processed_data_proposal(lane_id.clone(), DataProposalVerdict::Vote, dp2.clone())
+        .on_processed_data_proposal(
+            lane_id.clone(),
+            DataProposalVerdict::Vote,
+            dp2.clone(),
+            true,
+        )
+        .await
         .is_err());
 
     assert!(!ctx.mempool.lanes.contains(&lane_id, &dp2_hash));

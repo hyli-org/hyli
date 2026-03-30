@@ -8,11 +8,11 @@ use client_sdk::tcp_client::TcpServerMessage;
 use hyli_turmoil_shims::collections::HashMap;
 use tracing::{debug, info, trace};
 
+use super::api::RestApiMessage;
 use super::verifiers::{verify_proof, verify_recursive_proof};
 use super::DisseminationEvent;
 #[cfg(test)]
 use super::MempoolNetMessage;
-use super::{api::RestApiMessage, storage::Storage};
 use indexmap::IndexMap;
 use std::{collections::HashSet, sync::Arc};
 use tokio::task::Id as TaskId;
@@ -362,9 +362,12 @@ impl super::Mempool {
         self.metrics
             .record_created_data_proposal_bytes(&lane_id, data_proposal.estimate_size() as u64);
 
+        self.durability
+            .prime_persistence(lane_id.clone(), &data_proposal)?;
+
         let (data_proposal_hash, cumul_size) =
             self.lanes
-                .store_data_proposal(&self.crypto, &lane_id, data_proposal)?;
+                .store_data_proposal(&self.crypto, &lane_id, Arc::new(data_proposal))?;
 
         self.send_dissemination_event(DisseminationEvent::NewDpCreated {
             lane_id: lane_id.clone(),

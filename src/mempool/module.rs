@@ -3,7 +3,8 @@ use hyli_modules::{log_error, module_handle_messages};
 use std::{sync::Arc, time::Duration};
 
 use crate::{
-    consensus::ConsensusEvent, model::*, p2p::network::MsgWithHeader, utils::conf::P2pMode,
+    consensus::ConsensusEvent, model::*, p2p::network::MsgWithHeader,
+    shared_storage::durability_backend_for_conf, utils::conf::P2pMode,
 };
 
 use client_sdk::tcp_client::TcpServerMessage;
@@ -16,7 +17,7 @@ use crate::model::SharedRunContext;
 
 use super::{
     api, mempool_bus_client::MempoolBusClient, metrics::MempoolMetrics, shared_lanes_storage,
-    storage::Storage, Mempool, MempoolStore,
+    Mempool, MempoolStore,
 };
 
 use anyhow::Result;
@@ -47,6 +48,13 @@ impl Module for Mempool {
 
         let mut lanes = shared_lanes_storage(&ctx.config.data_directory)?;
         lanes.set_metrics_context(ctx.config.id.clone());
+        let durability = crate::shared_storage::DataProposalDurability::new(
+            durability_backend_for_conf(
+                &ctx.config.data_directory,
+                &ctx.config.data_proposal_durability,
+            ),
+            &ctx.config.data_directory,
+        )?;
 
         let mut mempool = Mempool {
             bus,
@@ -55,6 +63,7 @@ impl Module for Mempool {
             crypto: Arc::clone(&ctx.crypto),
             metrics,
             lanes,
+            durability,
             inner,
         };
         mempool.restore_inflight_work();
@@ -147,6 +156,7 @@ impl Module for Mempool {
     async fn persist(&mut self) -> Result<ModulePersistOutput> {
         if let Some(file) = &self.file {
             self.lanes.persist()?;
+            self.durability.persist()?;
 
             let mempool_file = "mempool.bin";
             let checksum = Self::save_on_disk(file, mempool_file.as_ref(), &self.inner)?;

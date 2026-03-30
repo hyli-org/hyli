@@ -1,10 +1,11 @@
 //! Dissemination manager: routes data proposals, tracks peer knowledge, and schedules sync/reply.
 //! It consumes events from mempool/consensus and emits outbound network messages.
 
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use anyhow::{bail, Context, Result};
 use futures::StreamExt;
+use hyli_model::ArcBorsh;
 use hyli_model::{
     utils::TimestampMs, DataProposalHash, DataSized, LaneBytesSize, LaneId, NodeStateEvent,
     ValidatorPublicKey,
@@ -29,7 +30,7 @@ use hyli_turmoil_shims::collections::HashMap;
 use super::{
     metrics::MempoolMetrics,
     shared_lanes_storage,
-    storage::{LaneEntryMetadata, MetadataOrMissingHash, Storage},
+    storage::{LaneEntryMetadata, MetadataOrMissingHash},
     LanesStorage, MempoolNetMessage,
 };
 
@@ -475,7 +476,7 @@ impl DisseminationManager {
                             Some(dp_hash) => {
                                 debug!("Updating SyncRequest to {:?}-{} as {} is present", request.from, dp_hash, request.to);
                                 request.to = dp_hash.clone();
-                            },
+                            }
                             None => warn!("Malformed syncRequest - 'to' {} has no parent but 'from' {:?} is a DP", request.to, request.from),
                         }
                     }
@@ -628,10 +629,11 @@ impl DisseminationManager {
             };
 
             let mut send_succeeded = false;
-            if let Ok(Some(mut data_proposal)) = log_error!(
+            if let Ok(Some(data_proposal)) = log_error!(
                 self.lanes.get_dp_by_hash(&lane_id, &dp_hash),
                 "Getting data proposal to prepare a SyncReply"
             ) {
+                let mut data_proposal = Arc::unwrap_or_clone(data_proposal);
                 if let Ok(Some(proofs)) = log_error!(
                     self.lanes.get_proofs_by_hash(&lane_id, &dp_hash),
                     "Getting proofs to prepare a SyncReply"
@@ -644,7 +646,7 @@ impl DisseminationManager {
                     .sign_msg_with_header(MempoolNetMessage::SyncReply(
                         lane_id.clone(),
                         metadata.signatures.clone(),
-                        data_proposal,
+                        ArcBorsh::new(data_proposal.into()),
                     ));
 
                 if let Ok(signed_reply) = signed_reply {
@@ -857,9 +859,10 @@ impl DisseminationManager {
             return Ok(false);
         }
 
-        let Some(mut data_proposal) = self.lanes.get_dp_by_hash(lane_id, dp_hash)? else {
+        let Some(data_proposal) = self.lanes.get_dp_by_hash(lane_id, dp_hash)? else {
             bail!("Can't find DataProposal {} in lane {}", dp_hash, lane_id);
         };
+        let mut data_proposal = Arc::unwrap_or_clone(data_proposal);
 
         let Some(proofs) = self.lanes.get_proofs_by_hash(lane_id, dp_hash)? else {
             warn!(
@@ -881,8 +884,12 @@ impl DisseminationManager {
             })
             .cloned()
             .unwrap_or(self.crypto.sign(expected_msg)?);
-        let net_message =
-            MempoolNetMessage::DataProposal(lane_id.clone(), dp_hash.clone(), data_proposal, vote);
+        let net_message = MempoolNetMessage::DataProposal(
+            lane_id.clone(),
+            dp_hash.clone(),
+            ArcBorsh::new(data_proposal.into()),
+            vote,
+        );
 
         if filtered_targets.len() == bonded_validators_len && there_are_other_validators {
             self.metrics

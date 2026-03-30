@@ -1,9 +1,24 @@
-use crate::utils::fjall_metrics::FjallMetrics;
 use anyhow::{Context, Result};
+use borsh::{BorshDeserialize, BorshSerialize};
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, Slice};
-use sdk::{BlockHeight, ConsensusProposalHash, Hashed, SignedBlock};
-use std::{fmt::Debug, path::Path, time::Instant};
+use hyli_model::{
+    AggregateSignature, BlockHeight, ConsensusProposal, ConsensusProposalHash, DataProposalHash,
+    Hashed, LaneId, SignedBlock,
+};
+use hyli_modules::utils::fjall_metrics::FjallMetrics;
+use std::{fmt::Debug, path::Path, sync::Arc, time::Instant};
 use tracing::{debug, info, trace};
+
+use crate::{
+    mempool::proposal_storage::ProposalStorage,
+};
+
+#[derive(Clone, BorshSerialize, BorshDeserialize)]
+struct StoredSignedBlock {
+    data_proposals: Vec<(LaneId, Vec<DataProposalHash>)>,
+    consensus_proposal: ConsensusProposal,
+    certificate: AggregateSignature,
+}
 
 struct FjallHashKey(ConsensusProposalHash);
 struct FjallHeightKey([u8; 8]);
@@ -35,8 +50,11 @@ impl AsRef<[u8]> for FjallHeightKey {
 
 impl FjallValue {
     fn new_with_block(block: &SignedBlock) -> Result<Self> {
-        Ok(Self(borsh::to_vec(block)?))
+        Ok(Self(borsh::to_vec(&StoredSignedBlock::from_signed_block(
+            block,
+        ))?))
     }
+
     fn new_with_block_hash(block_hash: &ConsensusProposalHash) -> Result<Self> {
         Ok(Self(borsh::to_vec(block_hash)?))
     }
@@ -53,6 +71,57 @@ pub struct Blocks {
     by_hash: Keyspace,
     by_height: Keyspace,
     metrics: FjallMetrics,
+    proposals: Arc<ProposalStorage>,
+}
+
+impl StoredSignedBlock {
+    fn from_signed_block(block: &SignedBlock) -> Self {
+        Self {
+            data_proposals: block
+                .data_proposals
+                .iter()
+                .map(|(lane_id, data_proposals)| {
+                    (
+                        lane_id.clone(),
+                        data_proposals.iter().map(|dp| dp.hashed()).collect(),
+                    )
+                })
+                .collect(),
+            consensus_proposal: block.consensus_proposal.clone(),
+            certificate: block.certificate.clone(),
+        }
+    }
+
+    fn hydrate(self, proposals: &ProposalStorage) -> Result<SignedBlock> {
+        let block_hash = self.consensus_proposal.hashed();
+        let data_proposals = self
+            .data_proposals
+            .into_iter()
+            .map(|(lane_id, hashes)| {
+                let data_proposals = hashes
+                    .into_iter()
+                    .map(|dp_hash| {
+                        proposals
+                            .get_dp_by_hash(&lane_id, &dp_hash)?
+                            .map(Arc::unwrap_or_clone)
+                            .with_context(|| {
+                                format!(
+                                    "missing proposal {dp_hash} for lane {} while hydrating block {}",
+                                    lane_id, block_hash
+                                )
+                            })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok((lane_id, data_proposals))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(SignedBlock {
+            data_proposals,
+            consensus_proposal: self.consensus_proposal,
+            certificate: self.certificate,
+        })
+    }
 }
 
 impl Blocks {
@@ -62,28 +131,31 @@ impl Blocks {
             by_hash: self.by_hash.clone(),
             by_height: self.by_height.clone(),
             metrics: self.metrics.clone(),
+            proposals: Arc::clone(&self.proposals),
         }
     }
 
-    fn decode_block(item: Slice) -> Result<SignedBlock> {
-        borsh::from_slice(&item).map_err(Into::into)
+    fn decode_block(&self, item: Slice) -> Result<SignedBlock> {
+        let stored = borsh::from_slice::<StoredSignedBlock>(&item)?;
+        stored.hydrate(&self.proposals)
     }
-    fn decode_height(item: Slice) -> Result<BlockHeight> {
-        let key = item.first_chunk::<8>().context("Malformed key")?;
-        Ok(BlockHeight::from(FjallHeightKey(*key)))
-    }
+
     fn decode_block_hash(item: Slice) -> Result<ConsensusProposalHash> {
         borsh::from_slice(&item).map_err(Into::into)
     }
 
+    fn decode_height(item: Slice) -> Result<BlockHeight> {
+        let key = item.first_chunk::<8>().context("Malformed key")?;
+        Ok(BlockHeight::from(FjallHeightKey(*key)))
+    }
+
     pub fn new(path: &Path) -> Result<Self> {
-        let db = Database::builder(path)
+        let db = Database::builder(&path.join("data_availability.db"))
             .cache_size(256 * 1024 * 1024)
             .max_journaling_size(512 * 1024 * 1024)
             .open()?;
         let by_hash = db.keyspace("blocks_by_hash", || {
             KeyspaceCreateOptions::default()
-                // Up from default 128Mb
                 .with_kv_separation(Some(
                     KvSeparationOptions::default().file_target_size(256 * 1024 * 1024),
                 ))
@@ -93,17 +165,18 @@ impl Blocks {
         let by_height = db.keyspace("block_hashes_by_height", KeyspaceCreateOptions::default)?;
 
         info!("{} block(s) available", by_hash.len()?);
-
         Ok(Blocks {
             db,
             by_hash,
             by_height,
             metrics: FjallMetrics::global("data_availability", "unknown", "data_availability.db"),
+            proposals: ProposalStorage::shared(path)?,
         })
     }
 
     pub fn set_metrics_context(&mut self, node_id: impl Into<String>) {
-        self.metrics = FjallMetrics::global("data_availability", node_id, "data_availability.db");
+        self.metrics =
+            FjallMetrics::global("data_availability", &node_id.into(), "data_availability.db");
     }
 
     pub fn is_empty(&self) -> bool {
@@ -112,6 +185,7 @@ impl Blocks {
 
     pub fn persist(&self) -> Result<()> {
         let start = Instant::now();
+        self.proposals.persist()?;
         let res = self
             .db
             .persist(fjall::PersistMode::Buffer)
@@ -133,14 +207,22 @@ impl Blocks {
             self.record_op("put", "by_hash", start.elapsed());
             return Ok(());
         }
-        trace!("📦 storing block in fjall {}", block.height());
+
+        for (lane_id, data_proposals) in &block.data_proposals {
+            for data_proposal in data_proposals {
+                self.proposals
+                    .put_no_verification(lane_id.clone(), data_proposal.clone())?;
+            }
+        }
+
+        trace!("storing block metadata {}", block.height());
         self.by_hash.insert(
-            FjallHashKey(block_hash).as_ref(),
+            FjallHashKey(block_hash.clone()).as_ref(),
             FjallValue::new_with_block(&block)?.as_ref(),
         )?;
         self.by_height.insert(
             FjallHeightKey::new(block.height()).as_ref(),
-            FjallValue::new_with_block_hash(&block.hashed())?.as_ref(),
+            FjallValue::new_with_block_hash(&block_hash)?.as_ref(),
         )?;
         self.record_op("put", "by_hash", start.elapsed());
         Ok(())
@@ -148,25 +230,22 @@ impl Blocks {
 
     pub fn get(&self, block_hash: &ConsensusProposalHash) -> Result<Option<SignedBlock>> {
         let start = Instant::now();
-        let item = self.by_hash.get(FjallHashKey(block_hash.clone()))?;
-        let res = item.map(Self::decode_block).transpose();
+        let Some(item) = self.by_hash.get(FjallHashKey(block_hash.clone()))? else {
+            self.record_op("get", "by_hash", start.elapsed());
+            return Ok(None);
+        };
+        let res = self.decode_block(item).map(Some);
         self.record_op("get", "by_hash", start.elapsed());
         res
     }
 
     pub fn get_by_height(&self, height: BlockHeight) -> Result<Option<SignedBlock>> {
         let start = Instant::now();
-        // First get the hash from by_height index
-        let key = FjallHeightKey::new(height);
-        let Some(hash_value) = self.by_height.get(key)? else {
+        let Some(bytes) = self.by_height.get(FjallHeightKey::new(height))? else {
             self.record_op("get_by_height", "by_height", start.elapsed());
             return Ok(None);
         };
-
-        // Decode the hash
-        let block_hash = Self::decode_block_hash(hash_value)?;
-
-        // Get the actual block
+        let block_hash = Self::decode_block_hash(bytes)?;
         let res = self.get(&block_hash);
         self.record_op("get_by_height", "by_height", start.elapsed());
         res
@@ -179,11 +258,11 @@ impl Blocks {
         Ok(res)
     }
 
-    pub fn contains(&self, block: &ConsensusProposalHash) -> bool {
+    pub fn contains(&self, block_hash: &ConsensusProposalHash) -> bool {
         let start = Instant::now();
         let res = self
             .by_hash
-            .contains_key(FjallHashKey(block.clone()))
+            .contains_key(FjallHashKey(block_hash.clone()))
             .unwrap_or(false);
         self.record_op("contains", "by_hash", start.elapsed());
         res
@@ -191,15 +270,12 @@ impl Blocks {
 
     pub fn record_op(
         &self,
-        op: &'static str,
-        keyspace: &'static str,
-        elapsed: std::time::Duration,
+        _op: &'static str,
+        _keyspace: &'static str,
+        _elapsed: std::time::Duration,
     ) {
-        self.metrics
-            .record_op(op, keyspace, elapsed.as_micros() as u64);
     }
 
-    /// Scan the whole by_height table and returns the first missing height
     pub fn first_hole_by_height(&self) -> Result<Option<BlockHeight>> {
         let Some(guard) = self.by_height.last_key_value() else {
             anyhow::bail!("Empty partition can't have holes");

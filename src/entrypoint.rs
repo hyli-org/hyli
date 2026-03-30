@@ -587,6 +587,11 @@ pub async fn common_main(
             })
             .await?;
 
+        if config.gcs.enabled() {
+            configure_dp_gcs_runtime(&config.gcs).await?;
+        } else {
+            clear_dp_gcs_runtime();
+        }
         handler
             .build_module::<DataAvailability>(ctx.clone())
             .await?;

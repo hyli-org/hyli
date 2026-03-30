@@ -115,3 +115,8 @@ index_tx_events = true
 suffixes = ["default"]
 default_blob_suffix = "default"
 default_proof_suffix = "default"
+
+[data_proposal_durability]
+gcs_bucket = ""
+gcs_prefix = "local"
+save_data_proposals = false

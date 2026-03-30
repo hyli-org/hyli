@@ -242,7 +242,12 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
         .crypto
         .sign((data_proposal_hash.clone(), cumul_size))?;
     node_client.send(node_modules.crypto.sign_msg_with_header(
-        MempoolNetMessage::DataProposal(lane_id, data_proposal_hash, data_proposal, proposal_sig),
+        MempoolNetMessage::DataProposal(
+            lane_id,
+            data_proposal_hash,
+            hyli_model::ArcBorsh::new(std::sync::Arc::new(data_proposal)),
+            proposal_sig,
+        ),
     )?)?;
 
     // Wait until we commit this TX

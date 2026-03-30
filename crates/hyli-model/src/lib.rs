@@ -10,6 +10,7 @@ mod transaction;
 
 pub mod utils;
 pub mod verifiers;
+pub use utils::*;
 
 #[cfg(feature = "full")]
 pub use block::*;

@@ -8,6 +8,7 @@ use crate::{
     p2p::network::{
         HeaderSignableData, HeaderSigner, IntoHeaderSignableData, MsgWithHeader, OutboundMessage,
     },
+    shared_storage::DataProposalDurability,
     utils::{conf::SharedConf, serialize::BorshableIndexMap},
 };
 use anyhow::{bail, Context, Result};
@@ -15,7 +16,9 @@ use api::RestApiMessage;
 use block_construction::BlockUnderConstruction;
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::tcp_client::TcpServerMessage;
+use hyli_crypto::BlstCrypto;
 use hyli_crypto::SharedBlstCrypto;
+pub use hyli_model::ArcBorsh;
 use hyli_modules::{bus::BusMessage, module_bus_client};
 use hyli_net::ordered_join_set::OrderedJoinSet;
 use hyli_net_traits::TcpMessageLabel;
@@ -26,21 +29,14 @@ use staking::state::Staking;
 use std::{
     collections::{BTreeMap, VecDeque},
     fmt::Display,
-    io::{Read, Write},
     ops::{Deref, DerefMut},
     path::PathBuf,
     sync::Arc,
 };
-use storage::Storage;
-use verify_tx::DataProposalVerdict;
-// Pick one of the two implementations
-// use storage_memory::LanesStorage;
-// Pick one of the two implementations by changing the re-export below.
-// pub use storage_memory::{shared_lanes_storage, LanesStorage};
-use hyli_crypto::BlstCrypto;
-pub use storage_fjall::{shared_lanes_storage, LanesStorage};
+pub use storage::{shared_lanes_storage, LanesStorage};
 use strum_macros::IntoStaticStr;
 use tracing::{debug, info};
+use verify_tx::DataProposalVerdict;
 
 pub mod api;
 pub mod block_construction;
@@ -48,9 +44,8 @@ pub mod dissemination;
 pub mod metrics;
 pub mod module;
 pub mod own_lane;
+pub mod proposal_storage;
 pub mod storage;
-pub mod storage_fjall;
-pub mod storage_memory;
 pub mod verifiers;
 pub mod verify_tx;
 
@@ -59,38 +54,12 @@ pub mod tests;
 
 pub use dissemination::DisseminationEvent;
 
-#[derive(Clone, Debug)]
-pub(super) struct ArcBorsh<T>(Arc<T>);
-
-impl<T> ArcBorsh<T> {
-    pub(super) fn new(value: Arc<T>) -> Self {
-        Self(value)
-    }
-
-    pub(super) fn arc(&self) -> Arc<T> {
-        Arc::clone(&self.0)
-    }
-}
-
-impl<T: BorshSerialize> BorshSerialize for ArcBorsh<T> {
-    fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
-        self.0.serialize(writer)
-    }
-}
-
-impl<T: BorshDeserialize> BorshDeserialize for ArcBorsh<T> {
-    fn deserialize_reader<R: Read>(reader: &mut R) -> std::io::Result<Self> {
-        let value = T::deserialize_reader(reader)?;
-        Ok(Self(Arc::new(value)))
-    }
-}
-
 /// Validator Data Availability Guarantee
 /// This is a signed message that contains the hash of the data proposal and the size of the lane (DP included)
 /// It acts as proof the validator committed to making this DP available.
 /// We don't actually sign the Lane ID itself, assuming DPs are unique enough across lanes, as BLS signatures are slow.
 pub type ValidatorDAG = SignedByValidator<(DataProposalHash, LaneBytesSize)>;
-pub type BufferedEntry = (Vec<ValidatorDAG>, DataProposal);
+pub type BufferedEntry = (Vec<ValidatorDAG>, Arc<DataProposal>);
 
 #[derive(Default, BorshSerialize, BorshDeserialize)]
 pub struct MempoolStore {
@@ -137,6 +106,7 @@ pub struct Mempool {
     crypto: SharedBlstCrypto,
     metrics: MempoolMetrics,
     lanes: LanesStorage,
+    durability: DataProposalDurability,
     inner: MempoolStore,
 }
 
@@ -189,10 +159,15 @@ struct MempoolBusClient {
     TcpMessageLabel,
 )]
 pub enum MempoolNetMessage {
-    DataProposal(LaneId, DataProposalHash, DataProposal, ValidatorDAG),
+    DataProposal(
+        LaneId,
+        DataProposalHash,
+        ArcBorsh<DataProposal>,
+        ValidatorDAG,
+    ),
     DataVote(LaneId, ValidatorDAG),
     SyncRequest(LaneId, Option<DataProposalHash>, Option<DataProposalHash>),
-    SyncReply(LaneId, Vec<ValidatorDAG>, DataProposal),
+    SyncReply(LaneId, Vec<ValidatorDAG>, ArcBorsh<DataProposal>),
 }
 
 impl BusMessage for MempoolNetMessage {}
@@ -228,8 +203,8 @@ impl IntoHeaderSignableData for MempoolNetMessage {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ProcessedDPEvent {
     OnHashedDataProposal((LaneId, DataProposal, ValidatorDAG)),
-    OnProcessedDataProposal((LaneId, DataProposalVerdict, DataProposal)),
-    OnHashedSyncReply((LaneId, Vec<ValidatorDAG>, DataProposal, DataProposalHash)),
+    OnProcessedDataProposal((LaneId, DataProposalVerdict, DataProposal, bool)),
+    OnHashedSyncReply((LaneId, Vec<ValidatorDAG>, Arc<DataProposal>, DataProposalHash)),
 }
 
 impl Mempool {
@@ -391,14 +366,21 @@ impl Mempool {
         match event {
             ProcessedDPEvent::OnHashedDataProposal((lane_id, data_proposal, vote)) => self
                 .on_hashed_data_proposal(&lane_id, data_proposal, vote)
+                .await
                 .context("Hashing data proposal"),
             ProcessedDPEvent::OnHashedSyncReply((lane_id, signatures, data_proposal, dp_hash)) => {
                 self.on_hashed_sync_reply(lane_id, signatures, data_proposal, dp_hash)
                     .await
                     .context("Handling sync reply data proposal")
             }
-            ProcessedDPEvent::OnProcessedDataProposal((lane_id, verdict, data_proposal)) => self
-                .on_processed_data_proposal(lane_id, verdict, data_proposal)
+            ProcessedDPEvent::OnProcessedDataProposal((
+                lane_id,
+                verdict,
+                data_proposal,
+                vote_ready,
+            )) => self
+                .on_processed_data_proposal(lane_id, verdict, data_proposal, vote_ready)
+                .await
                 .context("Processing data proposal"),
         }
     }
@@ -458,7 +440,8 @@ impl Mempool {
                     );
                 }
                 BlstCrypto::verify(&vdag).context("Invalid DataProposal vote signature")?;
-                self.on_data_proposal(&lane_id, data_proposal_hash, data_proposal, vdag.clone())?;
+                self.on_data_proposal(&lane_id, data_proposal_hash, data_proposal, vdag.clone())
+                    .await?;
                 self.on_data_vote(lane_id, vdag)?;
             }
             MempoolNetMessage::DataVote(lane_id, vdag) => {
@@ -480,7 +463,7 @@ impl Mempool {
             }
             MempoolNetMessage::SyncReply(lane_id, sigs, data_proposal) => {
                 // Don't bother checking the signatures for sync replies, we trust our internal bookkeeping.
-                self.on_sync_reply(&lane_id, validator, sigs, data_proposal)
+                self.on_sync_reply(&lane_id, validator, sigs, data_proposal.arc())
                     .await?;
             }
         }

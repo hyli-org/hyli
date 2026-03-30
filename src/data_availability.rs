@@ -1,12 +1,10 @@
 //! Minimal block storage layer for data availability.
 
+pub mod block_storage;
 pub mod local_da_replayer;
 
-// Pick one of the two implementations
-use hyli_modules::modules::data_availability::blocks_fjall::Blocks;
-use hyli_modules::utils::da_codec::DataAvailabilityServer;
-//use hyli_modules::modules::data_availability::blocks_memory::Blocks;
 use hyli_modules::modules::da_listener::{DaStreamPoll, SignedDaStream};
+use hyli_modules::utils::da_codec::DataAvailabilityServer;
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
 use hyli_net::tcp::TcpEvent;
@@ -30,6 +28,7 @@ use strum_macros::AsRefStr;
 use tokio::task::JoinSet;
 use tracing::{debug, error, info, trace, warn};
 
+use self::block_storage::Blocks;
 use crate::model::SharedRunContext;
 
 impl Module for DataAvailability {
@@ -38,7 +37,7 @@ impl Module for DataAvailability {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> anyhow::Result<Self> {
         let bus = DABusClient::new_from_bus(bus.new_handle()).await;
 
-        let mut blocks = Blocks::new(&ctx.config.data_directory.join("data_availability.db"))?;
+        let mut blocks = Blocks::new(&ctx.config.data_directory)?;
         blocks.set_metrics_context(ctx.config.id.clone());
         let highest_block = blocks.highest();
 
@@ -927,7 +926,7 @@ impl DataAvailability {
                 // Mempool-produced blocks are local tip updates, not catchup-stream progress.
                 // Feeding them into catchup progress can prematurely complete backfill.
                 _ = self
-                    .handle_signed_block(signed_block, tcp_server, catchup_joinset)
+                    .handle_signed_block(signed_block.into(), tcp_server, catchup_joinset)
                     .await;
             }
             MempoolBlockEvent::StartedBuildingBlocks(height) => {
@@ -1415,7 +1414,7 @@ pub mod tests {
         // Feed Da with blocks, should stream them to the client
         for block in blocks {
             block_sender
-                .send(MempoolBlockEvent::BuiltSignedBlock(block))
+                .send(MempoolBlockEvent::BuiltSignedBlock(block.into()))
                 .unwrap();
         }
 
@@ -1449,11 +1448,14 @@ pub mod tests {
             ccp.consensus_proposal.parent_hash = ccp.consensus_proposal.hashed();
             ccp.consensus_proposal.slot = i;
             block_sender
-                .send(MempoolBlockEvent::BuiltSignedBlock(SignedBlock {
-                    data_proposals: vec![(LaneId::default(), vec![])],
-                    certificate: ccp.certificate.clone(),
-                    consensus_proposal: ccp.consensus_proposal.clone(),
-                }))
+                .send(MempoolBlockEvent::BuiltSignedBlock(
+                    SignedBlock {
+                        data_proposals: vec![(LaneId::default(), vec![])],
+                        certificate: ccp.certificate.clone(),
+                        consensus_proposal: ccp.consensus_proposal.clone(),
+                    }
+                    .into(),
+                ))
                 .unwrap();
         }
 
@@ -1642,7 +1644,9 @@ pub mod tests {
 
         // Waiting a bit to push the block ten in the middle of all other 1..9 blocks
         tokio::time::sleep(Duration::from_millis(200)).await;
-        _ = block_sender.send(MempoolBlockEvent::BuiltSignedBlock(block_ten.clone()));
+        _ = block_sender.send(MempoolBlockEvent::BuiltSignedBlock(
+            block_ten.clone().into(),
+        ));
 
         let mut received_blocks = vec![];
         while let Some(streamed_block) = rx.recv().await {
@@ -1675,11 +1679,14 @@ pub mod tests {
             ccp.consensus_proposal.parent_hash = ccp.consensus_proposal.hashed();
             ccp.consensus_proposal.slot = i;
             block_sender
-                .send(MempoolBlockEvent::BuiltSignedBlock(SignedBlock {
-                    data_proposals: vec![(LaneId::default(), vec![])],
-                    certificate: ccp.certificate.clone(),
-                    consensus_proposal: ccp.consensus_proposal.clone(),
-                }))
+                .send(MempoolBlockEvent::BuiltSignedBlock(
+                    SignedBlock {
+                        data_proposals: vec![(LaneId::default(), vec![])],
+                        certificate: ccp.certificate.clone(),
+                        consensus_proposal: ccp.consensus_proposal.clone(),
+                    }
+                    .into(),
+                ))
                 .unwrap();
         }
 
@@ -1715,11 +1722,14 @@ pub mod tests {
             ccp.consensus_proposal.parent_hash = ccp.consensus_proposal.hashed();
             ccp.consensus_proposal.slot = i;
             block_sender
-                .send(MempoolBlockEvent::BuiltSignedBlock(SignedBlock {
-                    data_proposals: vec![(LaneId::default(), vec![])],
-                    certificate: ccp.certificate.clone(),
-                    consensus_proposal: ccp.consensus_proposal.clone(),
-                }))
+                .send(MempoolBlockEvent::BuiltSignedBlock(
+                    SignedBlock {
+                        data_proposals: vec![(LaneId::default(), vec![])],
+                        certificate: ccp.certificate.clone(),
+                        consensus_proposal: ccp.consensus_proposal.clone(),
+                    }
+                    .into(),
+                ))
                 .unwrap();
         }
 
@@ -1802,7 +1812,9 @@ pub mod tests {
 
         // Initial fast catchup starts at floor and remains unbounded until mempool starts building.
         _ = da_receiver.da.catchupper.ensure_started(BlockHeight(0));
-        _ = block_sender.send(MempoolBlockEvent::BuiltSignedBlock(block_ten.clone()));
+        _ = block_sender.send(MempoolBlockEvent::BuiltSignedBlock(
+            block_ten.clone().into(),
+        ));
 
         let mut received_blocks = vec![];
         while let Some(streamed_block) = rx.recv().await {
