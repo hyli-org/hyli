@@ -147,7 +147,7 @@ impl Blocks {
     }
 
     pub fn new(path: &Path) -> Result<Self> {
-        let db = Database::builder(&path.join("data_availability.db"))
+        let db = Database::builder(path.join("data_availability.db"))
             .cache_size(256 * 1024 * 1024)
             .max_journaling_size(512 * 1024 * 1024)
             .open()?;
@@ -173,7 +173,7 @@ impl Blocks {
 
     pub fn set_metrics_context(&mut self, node_id: impl Into<String>) {
         self.metrics =
-            FjallMetrics::global("data_availability", &node_id.into(), "data_availability.db");
+            FjallMetrics::global("data_availability", node_id.into(), "data_availability.db");
     }
 
     pub fn is_empty(&self) -> bool {

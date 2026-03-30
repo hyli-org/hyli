@@ -284,7 +284,7 @@ impl DataProposalDurability {
             || self
                 .in_flight
                 .read()
-                .unwrap()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .get(&(lane_id.clone(), dp_hash.clone()))
                 .cloned()
                 .is_some_and(|tracker| {
@@ -303,11 +303,20 @@ impl DataProposalDurability {
     }
 
     fn persistence_tracker(&self, key: ProposalKey) -> Arc<PersistenceTracker> {
-        if let Some(existing) = self.in_flight.read().unwrap().get(&key).cloned() {
+        if let Some(existing) = self
+            .in_flight
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&key)
+            .cloned()
+        {
             return existing;
         }
 
-        let mut guard = self.in_flight.write().unwrap();
+        let mut guard = self
+            .in_flight
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard
             .entry(key)
             .or_insert_with(|| Arc::new(PersistenceTracker::default()))
@@ -358,7 +367,7 @@ impl DataProposalDurability {
         ) {
             in_flight
                 .write()
-                .unwrap()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .remove(&(lane_id.clone(), dp_hash.clone()));
         }
     }

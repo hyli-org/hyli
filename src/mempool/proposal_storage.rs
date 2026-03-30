@@ -209,6 +209,7 @@ impl ProposalStorage {
                     return Ok(None);
                 };
                 let mut data_proposal = borsh::from_slice::<DataProposal>(&bytes)?;
+                // Safety: the proposal bytes were loaded by the same hash key we are restoring.
                 unsafe {
                     data_proposal.unsafe_set_hash(dp_hash);
                 }
