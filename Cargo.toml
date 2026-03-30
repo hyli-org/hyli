@@ -250,6 +250,7 @@ tracing = { workspace = true }
 assertables = { workspace = true }
 axum = { workspace = true, features = ["macros", "multipart"] }
 bytes = { workspace = true }
+rustls = { workspace = true, features = ["aws-lc-rs"] }
 clap = { workspace = true, features = ["derive"] }
 config = { workspace = true, default-features = false, features = ["toml"] }
 futures = { workspace = true }
