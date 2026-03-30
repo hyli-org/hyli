@@ -9,9 +9,7 @@ use hyli_modules::utils::fjall_metrics::FjallMetrics;
 use std::{fmt::Debug, path::Path, sync::Arc, time::Instant};
 use tracing::{debug, info, trace};
 
-use crate::{
-    mempool::proposal_storage::ProposalStorage,
-};
+use crate::mempool::proposal_storage::ProposalStorage;
 
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 struct StoredSignedBlock {

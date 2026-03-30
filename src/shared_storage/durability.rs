@@ -41,9 +41,8 @@ impl DurabilityBackend for NullDurabilityBackend {
 type ProposalKey = (LaneId, DataProposalHash);
 type SharedPersistenceStateStore = Arc<dyn PersistenceStateStore>;
 
-static SHARED_PERSISTENCE_STORES: OnceLock<
-    Mutex<HashMap<PathBuf, SharedPersistenceStateStore>>,
-> = OnceLock::new();
+static SHARED_PERSISTENCE_STORES: OnceLock<Mutex<HashMap<PathBuf, SharedPersistenceStateStore>>> =
+    OnceLock::new();
 
 trait PersistenceStateStore: Send + Sync {
     fn mark_persisted(&self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> Result<()>;
@@ -106,8 +105,7 @@ impl FjallPersistenceStateStore {
             .cache_size(32 * 1024 * 1024)
             .max_journaling_size(64 * 1024 * 1024)
             .open()?;
-        let persisted =
-            db.keyspace("dp_persisted", KeyspaceCreateOptions::default)?;
+        let persisted = db.keyspace("dp_persisted", KeyspaceCreateOptions::default)?;
         Ok(Self { db, persisted })
     }
 }
@@ -289,15 +287,15 @@ impl DataProposalDurability {
                 .unwrap()
                 .get(&(lane_id.clone(), dp_hash.clone()))
                 .cloned()
-            .is_some_and(|tracker| {
-                matches!(
-                    *tracker
-                        .state
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner()),
-                    PersistenceState::Succeeded
-                )
-            })
+                .is_some_and(|tracker| {
+                    matches!(
+                        *tracker
+                            .state
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+                        PersistenceState::Succeeded
+                    )
+                })
     }
 
     pub fn persist(&self) -> Result<()> {
@@ -471,7 +469,9 @@ mod tests {
         let lane_id = LaneId::new(crypto.validator_pubkey().clone());
         let data_proposal = DataProposal::new_root(
             lane_id.clone(),
-            vec![make_register_contract_tx(ContractName::new("test-persisted"))],
+            vec![make_register_contract_tx(ContractName::new(
+                "test-persisted",
+            ))],
         );
         let hash = data_proposal.hashed();
 
@@ -494,7 +494,9 @@ mod tests {
         let lane_id = LaneId::new(crypto.validator_pubkey().clone());
         let data_proposal = DataProposal::new_root(
             lane_id.clone(),
-            vec![make_register_contract_tx(ContractName::new("test-persist-fail"))],
+            vec![make_register_contract_tx(ContractName::new(
+                "test-persist-fail",
+            ))],
         );
         let hash = data_proposal.hashed();
 
@@ -525,7 +527,9 @@ mod tests {
         let lane_id = LaneId::new(crypto.validator_pubkey().clone());
         let data_proposal = DataProposal::new_root(
             lane_id.clone(),
-            vec![make_register_contract_tx(ContractName::new("test-persisted-reused"))],
+            vec![make_register_contract_tx(ContractName::new(
+                "test-persisted-reused",
+            ))],
         );
         let hash = data_proposal.hashed();
 

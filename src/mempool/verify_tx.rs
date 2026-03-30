@@ -342,13 +342,17 @@ impl super::Mempool {
                 }
             }
             DataProposalVerdict::Refuse => {
-                self.cached_dp_votes
-                    .insert((lane_id.clone(), data_proposal.hashed()), DataProposalVerdict::Refuse);
+                self.cached_dp_votes.insert(
+                    (lane_id.clone(), data_proposal.hashed()),
+                    DataProposalVerdict::Refuse,
+                );
                 debug!("Refuse vote for DataProposal");
             }
             DataProposalVerdict::Ignore => {
-                self.cached_dp_votes
-                    .insert((lane_id.clone(), data_proposal.hashed()), DataProposalVerdict::Ignore);
+                self.cached_dp_votes.insert(
+                    (lane_id.clone(), data_proposal.hashed()),
+                    DataProposalVerdict::Ignore,
+                );
                 debug!("Ignore DataProposal {}", data_proposal.hashed());
             }
             DataProposalVerdict::VotePendingPersistence => {
@@ -581,8 +585,10 @@ impl super::Mempool {
             "Sending delayed vote for DataProposal {:?} on lane {} after persistence completed",
             received_hash, lane_id
         );
-        self.cached_dp_votes
-            .insert((lane_id.clone(), received_hash.clone()), DataProposalVerdict::Vote);
+        self.cached_dp_votes.insert(
+            (lane_id.clone(), received_hash.clone()),
+            DataProposalVerdict::Vote,
+        );
         self.send_vote(lane_id, received_hash.clone(), lane_size)?;
         Ok(true)
     }
