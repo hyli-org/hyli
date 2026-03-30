@@ -10,12 +10,12 @@ use anyhow::{anyhow, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
 use google_cloud_storage::client::Storage as GcsStorageClient;
-use hyli_model::{BlockHeight, LaneId};
+use hyli_model::LaneId;
 use tokio::sync::OnceCell;
 
 use crate::{
-    data_availability::block_storage::Blocks, model::DataProposalHash,
-    shared_storage::durability::DurabilityBackend, utils::conf::DataProposalDurabilityConf,
+    model::DataProposalHash, shared_storage::durability::DurabilityBackend,
+    utils::conf::DataProposalDurabilityConf,
 };
 
 #[derive(Clone)]
@@ -124,6 +124,16 @@ impl DurabilityBackend for GcsDurabilityBackend {
     }
 }
 
+pub fn persist_genesis_timestamp_for_gcs(data_directory: &Path, timestamp_ms: u128) -> Result<()> {
+    let store = GenesisTimestampStore {
+        timestamp_folder: timestamp_to_folder_name(timestamp_ms),
+    };
+    let path = data_directory.join(GENESIS_TIMESTAMP_FILE);
+    let mut file = File::create(&path).context("Creating genesis timestamp file")?;
+    borsh::to_writer(&mut file, &store).context("Serializing genesis timestamp file")?;
+    Ok(())
+}
+
 fn bucket_path(bucket: &str) -> String {
     if bucket.starts_with("projects/") {
         bucket.to_string()
@@ -161,9 +171,7 @@ fn load_genesis_timestamp_folder(data_directory: &Path) -> Result<Option<String>
     let full_path = data_directory.join(PathBuf::from(GENESIS_TIMESTAMP_FILE));
     let mut handle = match File::open(&full_path) {
         Ok(handle) => handle,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return load_genesis_timestamp_folder_from_blocks(data_directory)
-        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err).context("Opening genesis timestamp file"),
     };
 
@@ -176,17 +184,6 @@ fn load_genesis_timestamp_folder(data_directory: &Path) -> Result<Option<String>
     Ok(Some(store.timestamp_folder))
 }
 
-fn load_genesis_timestamp_folder_from_blocks(data_directory: &Path) -> Result<Option<String>> {
-    let blocks = Blocks::new(data_directory)?;
-    let Some(genesis_block) = blocks.get_by_height(BlockHeight(0))? else {
-        return Ok(None);
-    };
-
-    Ok(Some(timestamp_to_folder_name(
-        genesis_block.consensus_proposal.timestamp.0,
-    )))
-}
-
 fn timestamp_to_folder_name(timestamp_ms: u128) -> String {
     let secs = (timestamp_ms / 1000) as i64;
     let datetime =
@@ -197,21 +194,25 @@ fn timestamp_to_folder_name(timestamp_ms: u128) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyli_model::{utils::TimestampMs, SignedBlock};
+    use std::fs;
 
     #[test]
-    fn load_genesis_timestamp_folder_falls_back_to_local_blocks() -> Result<()> {
+    fn persist_and_load_genesis_timestamp_folder_round_trip() -> Result<()> {
         let tmpdir = tempfile::tempdir()?;
-        {
-            let mut blocks = Blocks::new(tmpdir.path())?;
-            let mut genesis = SignedBlock::default();
-            genesis.consensus_proposal.timestamp = TimestampMs(1_743_336_506_000);
-            blocks.put(genesis)?;
-        }
+        persist_genesis_timestamp_for_gcs(tmpdir.path(), 1_743_336_506_000)?;
 
         let timestamp_folder = load_genesis_timestamp_folder(tmpdir.path())?;
 
         assert_eq!(timestamp_folder.as_deref(), Some("2025-03-30T12-08-26Z"));
+        Ok(())
+    }
+
+    #[test]
+    fn load_genesis_timestamp_folder_returns_none_without_file() -> Result<()> {
+        let tmpdir = tempfile::tempdir()?;
+        fs::create_dir_all(tmpdir.path())?;
+
+        assert_eq!(load_genesis_timestamp_folder(tmpdir.path())?, None);
         Ok(())
     }
 
