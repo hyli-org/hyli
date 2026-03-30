@@ -1,6 +1,13 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{
+    fs::File,
+    future::Future,
+    path::{Path, PathBuf},
+    pin::Pin,
+    sync::Arc,
+};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
+use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
 use google_cloud_storage::client::Storage as GcsStorageClient;
 use hyli_model::LaneId;
@@ -15,6 +22,7 @@ use crate::{
 pub struct DpGcsRuntime {
     pub client: GcsStorageClient,
     pub conf: DataProposalDurabilityConf,
+    pub genesis_timestamp_folder: Option<String>,
 }
 
 #[derive(Clone)]
@@ -25,6 +33,7 @@ pub struct GcsDurabilityBackend {
 enum GcsRuntimeSource {
     Lazy {
         conf: DataProposalDurabilityConf,
+        data_directory: PathBuf,
         runtime: OnceCell<DpGcsRuntime>,
     },
     #[cfg(test)]
@@ -32,10 +41,11 @@ enum GcsRuntimeSource {
 }
 
 impl GcsDurabilityBackend {
-    pub fn new(conf: DataProposalDurabilityConf) -> Self {
+    pub fn new(data_directory: &Path, conf: DataProposalDurabilityConf) -> Self {
         Self {
             source: Arc::new(GcsRuntimeSource::Lazy {
                 conf,
+                data_directory: data_directory.to_path_buf(),
                 runtime: OnceCell::new(),
             }),
         }
@@ -50,11 +60,16 @@ impl GcsDurabilityBackend {
 
     async fn runtime(&self) -> Result<DpGcsRuntime> {
         match self.source.as_ref() {
-            GcsRuntimeSource::Lazy { conf, runtime } => Ok(runtime
+            GcsRuntimeSource::Lazy {
+                conf,
+                data_directory,
+                runtime,
+            } => Ok(runtime
                 .get_or_try_init(|| async {
                     Ok::<DpGcsRuntime, anyhow::Error>(DpGcsRuntime {
                         client: GcsStorageClient::builder().build().await?,
                         conf: conf.clone(),
+                        genesis_timestamp_folder: load_genesis_timestamp_folder(data_directory)?,
                     })
                 })
                 .await?
@@ -74,7 +89,7 @@ impl GcsDurabilityBackend {
             .client
             .write_object(
                 bucket_path(&runtime.conf.gcs_bucket),
-                object_name(&runtime.conf, &lane_id, &dp_hash),
+                object_name(&runtime, &lane_id, &dp_hash),
                 Bytes::from(payload),
             )
             .set_if_generation_match(0_i64)
@@ -117,13 +132,37 @@ fn bucket_path(bucket: &str) -> String {
     }
 }
 
-fn object_name(
-    conf: &DataProposalDurabilityConf,
-    lane_id: &LaneId,
-    dp_hash: &DataProposalHash,
-) -> String {
-    format!(
-        "{}/data_proposals/{}/{}.bin",
-        conf.gcs_prefix, lane_id, dp_hash
-    )
+fn object_name(runtime: &DpGcsRuntime, lane_id: &LaneId, dp_hash: &DataProposalHash) -> String {
+    let prefix = match runtime.genesis_timestamp_folder.as_deref() {
+        Some(genesis_timestamp_folder) => {
+            format!("{}/{genesis_timestamp_folder}", runtime.conf.gcs_prefix)
+        }
+        None => runtime.conf.gcs_prefix.clone(),
+    };
+
+    format!("{}/data_proposals/{}/{}.bin", prefix, lane_id, dp_hash)
+}
+
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
+struct GenesisTimestampStore {
+    timestamp_folder: String,
+}
+
+const GENESIS_TIMESTAMP_FILE: &str = "gcs_genesis_timestamp.bin";
+
+fn load_genesis_timestamp_folder(data_directory: &Path) -> Result<Option<String>> {
+    let full_path = data_directory.join(PathBuf::from(GENESIS_TIMESTAMP_FILE));
+    let mut handle = match File::open(&full_path) {
+        Ok(handle) => handle,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).context("Opening genesis timestamp file"),
+    };
+
+    let store: GenesisTimestampStore =
+        borsh::from_reader(&mut handle).context("Deserializing genesis timestamp file")?;
+
+    chrono::NaiveDateTime::parse_from_str(&store.timestamp_folder, "%Y-%m-%dT%H-%M-%SZ")
+        .context("Parsing genesis timestamp")?;
+
+    Ok(Some(store.timestamp_folder))
 }

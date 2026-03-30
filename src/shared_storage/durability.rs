@@ -391,13 +391,18 @@ mod tests {
         shared_storage::gcs::{DpGcsRuntime, GcsDurabilityBackend},
         utils::conf::DataProposalDurabilityConf,
     };
-    use axum::{extract::Path, response::IntoResponse, routing::post, Json, Router};
+    use axum::{
+        extract::{Path, Request},
+        response::IntoResponse,
+        routing::post,
+        Json, Router,
+    };
     use google_cloud_auth::credentials::anonymous::Builder as Anonymous;
     use google_cloud_storage::client::Storage;
     use hyli_crypto::BlstCrypto;
     use hyli_model::ContractName;
     use serde_json::json;
-    use std::sync::OnceLock;
+    use std::sync::{Arc, OnceLock};
     use tokio::{net::TcpListener, sync::Mutex, task::JoinHandle};
 
     static GCS_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -429,6 +434,7 @@ mod tests {
                 gcs_prefix: "test-prefix".to_string(),
                 save_data_proposals: true,
             },
+            genesis_timestamp_folder: None,
         })
     }
 
@@ -459,6 +465,41 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let endpoint = format!("http://{}", listener.local_addr()?);
         let app = Router::new().route("/upload/storage/v1/b/{bucket}/o", post(upload));
+        let task = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        Ok((endpoint, TestGcsServer { task }))
+    }
+
+    async fn start_recording_test_gcs_server(
+        recorded_queries: Arc<Mutex<Vec<String>>>,
+    ) -> anyhow::Result<(String, TestGcsServer)> {
+        async fn upload(
+            Path(bucket): Path<String>,
+            request: Request,
+            recorded_queries: Arc<Mutex<Vec<String>>>,
+        ) -> impl IntoResponse {
+            recorded_queries
+                .lock()
+                .await
+                .push(request.uri().query().unwrap_or_default().to_string());
+            Json(json!({
+                "bucket": format!("projects/_/buckets/{bucket}"),
+                "name": "stored-object",
+                "size": 1,
+            }))
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let endpoint = format!("http://{}", listener.local_addr()?);
+        let app = Router::new().route(
+            "/upload/storage/v1/b/{bucket}/o",
+            post({
+                let recorded_queries = Arc::clone(&recorded_queries);
+                move |path, request| upload(path, request, Arc::clone(&recorded_queries))
+            }),
+        );
         let task = tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });
@@ -552,6 +593,48 @@ mod tests {
             dir.path(),
         )?;
         assert!(fresh.is_persisted(&lane_id, &hash));
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_gcs_upload_prefix_includes_genesis_timestamp_folder() -> Result<()> {
+        let _guard = gcs_test_lock().lock().await;
+        let recorded_queries = Arc::new(Mutex::new(Vec::new()));
+        let (endpoint, _server) =
+            start_recording_test_gcs_server(Arc::clone(&recorded_queries)).await?;
+        let durability = DataProposalDurability::new_in_memory(Arc::new(
+            GcsDurabilityBackend::with_runtime(DpGcsRuntime {
+                client: Storage::builder()
+                    .with_endpoint(endpoint)
+                    .with_credentials(Anonymous::new().build())
+                    .build()
+                    .await?,
+                conf: DataProposalDurabilityConf {
+                    gcs_bucket: "test-bucket".to_string(),
+                    gcs_prefix: "test-prefix".to_string(),
+                    save_data_proposals: true,
+                },
+                genesis_timestamp_folder: Some("2026-03-30T14-00-00Z".to_string()),
+            }),
+        ));
+
+        let crypto = BlstCrypto::new("persistence-prefix").unwrap();
+        let lane_id = LaneId::new(crypto.validator_pubkey().clone());
+        let data_proposal = DataProposal::new_root(
+            lane_id.clone(),
+            vec![make_register_contract_tx(ContractName::new(
+                "test-prefix-dp",
+            ))],
+        );
+        let hash = data_proposal.hashed();
+
+        durability.prime_persistence(lane_id.clone(), &data_proposal)?;
+        durability.wait_until_persisted(&lane_id, &hash).await?;
+
+        let queries = recorded_queries.lock().await;
+        assert!(queries.iter().any(|query| {
+            query.contains("name=test-prefix%2F2026-03-30T14-00-00Z%2Fdata_proposals%2F")
+        }));
         Ok(())
     }
 }

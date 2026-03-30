@@ -16,7 +16,7 @@ pub fn durability_backend_for_conf(
     conf: &DataProposalDurabilityConf,
 ) -> Arc<dyn DurabilityBackend> {
     if conf.gcs_enabled() {
-        Arc::new(GcsDurabilityBackend::new(conf.clone()))
+        Arc::new(GcsDurabilityBackend::new(data_directory, conf.clone()))
     } else if conf.file_enabled() {
         Arc::new(FileDurabilityBackend::new(
             data_directory.join("durable_data_proposals"),
