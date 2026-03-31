@@ -13,7 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 USER runner
 
-RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable \
+  && /home/runner/.cargo/bin/rustup toolchain install nightly
 
 ENV PATH="/home/runner/.cargo/bin:${PATH}"
 
