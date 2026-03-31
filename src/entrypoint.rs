@@ -11,6 +11,7 @@ use crate::{
     model::{api::NodeInfo, ContractName, SharedRunContext},
     p2p::P2P,
     rest::{ApiDoc, RestApi, RestApiRunContext},
+    shared_storage::gcs::persist_current_chain_timestamp_from_node_state,
     single_node_consensus::SingleNodeConsensus,
     tcp_server::TcpServer,
     utils::{
@@ -464,6 +465,9 @@ pub async fn common_main(
                     ),
                     "Writing checksum manifest for fast catchup stores"
                 )?;
+
+                persist_current_chain_timestamp_from_node_state(&config.data_directory)
+                    .context("Persisting current chain timestamp from fast catchup node state")?;
             } else {
                 let reason = bootstrap_failure_reason
                     .unwrap_or_else(|| "no peer responded successfully".to_string());
@@ -481,6 +485,8 @@ pub async fn common_main(
                 NODE_STATE_BIN,
                 config.data_directory.display()
             );
+            persist_current_chain_timestamp_from_node_state(&config.data_directory)
+                .context("Persisting current chain timestamp from existing node state")?;
         }
     }
 

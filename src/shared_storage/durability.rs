@@ -434,7 +434,7 @@ mod tests {
                 gcs_prefix: "test-prefix".to_string(),
                 save_data_proposals: true,
             },
-            genesis_timestamp_folder: None,
+            current_chain_timestamp: "2026-03-30T14-00-00Z".to_string(),
         })
     }
 
@@ -614,7 +614,7 @@ mod tests {
                     gcs_prefix: "test-prefix".to_string(),
                     save_data_proposals: true,
                 },
-                genesis_timestamp_folder: Some("2026-03-30T14-00-00Z".to_string()),
+                current_chain_timestamp: "2026-03-30T14-00-00Z".to_string(),
             }),
         ));
 

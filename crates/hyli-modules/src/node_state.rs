@@ -370,6 +370,7 @@ impl<'a> std::ops::DerefMut for NodeStateProcessing<'a> {
 pub struct NodeStateStore {
     timeouts: Timeouts,
     pub current_height: BlockHeight,
+    pub current_chain_timestamp: Option<String>,
     // This field is public for testing purposes
     pub contracts: HashMap<ContractName, Contract>,
     unsettled_transactions: OrderedTxMap,
@@ -392,6 +393,7 @@ impl Default for NodeStateStore {
         let mut ret = Self {
             timeouts: Timeouts::default(),
             current_height: BlockHeight(0),
+            current_chain_timestamp: None,
             contracts: HashMap::new(),
             unsettled_transactions: OrderedTxMap::default(),
         };
@@ -444,6 +446,22 @@ impl<'any> NodeStateProcessing<'any> {
         debug!("Handling signed block: {:?}", signed_block.height());
 
         self.current_height = signed_block.height();
+        if initial_block {
+            self.current_chain_timestamp = Some(
+                chrono::DateTime::<chrono::Utc>::from_timestamp(
+                    (signed_block.consensus_proposal.timestamp.0 / 1000) as i64,
+                    0,
+                )
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Invalid genesis timestamp: {}",
+                        signed_block.consensus_proposal.timestamp.0
+                    )
+                })?
+                .format("%Y-%m-%dT%H-%M-%SZ")
+                .to_string(),
+            );
+        }
 
         self.clear_timeouts();
 
@@ -1985,6 +2003,7 @@ pub mod test {
     pub use helpers::*;
 
     use super::*;
+    use hyli_model::utils::TimestampMs;
     use hyli_net::clock::TimestampMsClock;
     use sdk::verifiers::ShaBlob;
     use sha3::Digest;
@@ -1994,6 +2013,30 @@ pub mod test {
             metrics: NodeStateMetrics::global("test"),
             store: NodeStateStore::default(),
         }
+    }
+
+    #[test]
+    fn genesis_block_sets_current_chain_timestamp() {
+        let mut node_state = NodeState {
+            metrics: NodeStateMetrics::global("test"),
+            store: NodeStateStore::default(),
+        };
+        let genesis_block = SignedBlock {
+            certificate: AggregateSignature::default(),
+            consensus_proposal: ConsensusProposal {
+                slot: 0,
+                timestamp: TimestampMs(1_743_336_506_000),
+                ..ConsensusProposal::default()
+            },
+            data_proposals: Vec::new(),
+        };
+
+        node_state.handle_signed_block(genesis_block).unwrap();
+
+        assert_eq!(
+            node_state.store.current_chain_timestamp.as_deref(),
+            Some("2025-03-30T12-08-26Z")
+        );
     }
 
     fn new_blob(contract: &str) -> Blob {

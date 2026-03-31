@@ -48,11 +48,14 @@ impl Module for Mempool {
 
         let mut lanes = shared_lanes_storage(&ctx.config.data_directory)?;
         lanes.set_metrics_context(ctx.config.id.clone());
+        let durability_backend = durability_backend_for_conf(
+            &ctx.config.data_directory,
+            &ctx.config.data_proposal_durability,
+            ctx.config.run_fast_catchup,
+        )
+        .await?;
         let durability = crate::shared_storage::DataProposalDurability::new(
-            durability_backend_for_conf(
-                &ctx.config.data_directory,
-                &ctx.config.data_proposal_durability,
-            ),
+            durability_backend,
             &ctx.config.data_directory,
         )?;
 
