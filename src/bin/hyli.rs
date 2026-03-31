@@ -29,6 +29,9 @@ pub struct Args {
 
     #[clap(long, action)]
     pub jolt: bool,
+
+    #[clap(long, action)]
+    pub sp1: bool,
 }
 
 #[cfg(feature = "dhat")]
@@ -117,9 +120,12 @@ async fn inner_main() -> Result<()> {
         }
     }
 
-    #[cfg(feature = "sp1")]
-    {
-        hyli_verifiers::sp1_4::init();
+    if args.sp1 {
+        if let Some(backend) = config.verifier_workers.backends.get_mut("sp1") {
+            backend.enabled = true;
+        } else {
+            anyhow::bail!("SP1 verifier worker backend not found in config");
+        }
     }
 
     log_error!(

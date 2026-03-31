@@ -23,6 +23,7 @@ members = [
   "crates/jolt/model",
   "crates/jolt/prover",
   "crates/jolt/verifier-worker",
+  "crates/sp1/verifier-worker",
   "crates/hyli-bus",
   "crates/hyli-modules",
   "crates/hyli-tools",
@@ -355,7 +356,6 @@ turmoil = [
 
 cairo-m = ["hyli-verifiers/cairo-m"]
 risc0 = ["hyli-verifiers/risc0", "client-sdk/risc0"]
-sp1 = ["hyli-verifiers/sp1", "client-sdk/sp1"]
 reth = ["hyli-verifiers/reth"]
 
 # Disable dependency keyring by default, as it requires libdbus
