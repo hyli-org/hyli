@@ -155,10 +155,12 @@ impl super::Mempool {
             DataProposalVerdict::Process => {
                 trace!("Further processing for DataProposal");
                 let lane_id = lane_id.clone();
+                let proof_verifiers = self.proof_verifiers.clone();
                 let handle = self.inner.long_tasks_runtime.handle();
                 self.inner.processing_dps.spawn_on(
                     async move {
-                        let decision = Self::process_data_proposal(&mut data_proposal);
+                        let decision =
+                            Self::process_data_proposal(proof_verifiers, &mut data_proposal).await;
                         Ok(ProcessedDPEvent::OnProcessedDataProposal((
                             lane_id,
                             decision,
@@ -326,7 +328,10 @@ impl super::Mempool {
         }
     }
 
-    fn process_data_proposal(data_proposal: &mut DataProposal) -> DataProposalVerdict {
+    async fn process_data_proposal(
+        proof_verifiers: std::sync::Arc<crate::verifier_workers::ProofVerifierService>,
+        data_proposal: &mut DataProposal,
+    ) -> DataProposalVerdict {
         for tx in &data_proposal.txs {
             match &tx.transaction_data {
                 TransactionData::Blob(_) => {
@@ -353,7 +358,9 @@ impl super::Mempool {
                     let is_recursive = proof_tx.contract_name.0 == "risc0-recursion";
 
                     if is_recursive {
-                        match verify_recursive_proof(proof, verifier, program_id) {
+                        match verify_recursive_proof(&proof_verifiers, proof, verifier, program_id)
+                            .await
+                        {
                             Ok((local_program_ids, local_hyli_outputs)) => {
                                 let data_matches = local_program_ids
                                     .iter()
@@ -385,7 +392,7 @@ impl super::Mempool {
                             }
                         }
                     } else {
-                        match verify_proof(proof, verifier, program_id) {
+                        match verify_proof(&proof_verifiers, proof, verifier, program_id).await {
                             Ok(outputs) => {
                                 // TODO: we could check the blob hash here too.
                                 if outputs.len() != proof_tx.proven_blobs.len()

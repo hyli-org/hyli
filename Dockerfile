@@ -19,14 +19,15 @@ FROM ${BASE_IMAGE} AS runner
 
 WORKDIR /hyli
 
-COPY --from=builder /usr/src/hyli/target/release/hyli               ./
-COPY --from=builder /usr/src/hyli/target/release/indexer            ./
-COPY --from=builder /usr/src/hyli/target/release/hyli-loadtest      ./
-COPY --from=builder /usr/src/hyli/target/release/smt_long_running_test ./
-COPY --from=builder /usr/src/hyli/target/release/gcs_uploader       ./
-COPY --from=builder /usr/src/hyli/target/release/smt_auto_prover    ./
-COPY --from=builder /usr/src/hyli/target/release/health_check       ./
-COPY --from=builder /usr/src/hyli/target/release/rate_limiter_proxy ./
+COPY --from=builder /usr/src/hyli/target/release/hyli                      ./
+COPY --from=builder /usr/src/hyli/target/release/indexer                   ./
+COPY --from=builder /usr/src/hyli/target/release/hyli-loadtest             ./
+COPY --from=builder /usr/src/hyli/target/release/smt_long_running_test     ./
+COPY --from=builder /usr/src/hyli/target/release/gcs_uploader              ./
+COPY --from=builder /usr/src/hyli/target/release/smt_auto_prover           ./
+COPY --from=builder /usr/src/hyli/target/release/health_check              ./
+COPY --from=builder /usr/src/hyli/target/release/rate_limiter_proxy        ./
+COPY --from=builder /usr/src/hyli/target/release/hyli-jolt-verifier        ./
 
 VOLUME /hyli/data
 

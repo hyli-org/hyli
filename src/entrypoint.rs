@@ -17,6 +17,7 @@ use crate::{
         conf::{self, P2pMode},
         modules::ModulesHandler,
     },
+    verifier_workers::ProofVerifierService,
 };
 use anyhow::{bail, Context, Result};
 use axum::Router;
@@ -566,6 +567,11 @@ pub async fn common_main(
     }
 
     if config.p2p.mode != conf::P2pMode::None {
+        let proof_verifiers = Arc::new(
+            ProofVerifierService::from_config(&config.verifier_workers)
+                .await
+                .context("initializing verifier workers")?,
+        );
         let ctx = SharedRunContext {
             config: config.clone(),
             api: build_api_ctx.clone(),
@@ -577,6 +583,7 @@ pub async fn common_main(
                 .as_ref()
                 .map(|node_state| node_state.current_height),
             start_timestamp,
+            proof_verifiers,
         };
 
         handler

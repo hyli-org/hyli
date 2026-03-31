@@ -18,7 +18,7 @@ undocumented_unsafe_blocks = "warn"
 [dependencies]
 hyli-model = { workspace = true, default-features = false }
 serde = { workspace = true, features = ["derive", "alloc"] }
-sha2 = { workspace = true }                                  # precompile patched at workspace root
+sha2 = { workspace = true, optional = true }                 # precompile patched at workspace root
 borsh = { workspace = true, features = ["derive"] }
 tracing = { workspace = true, optional = true }
 
@@ -30,6 +30,7 @@ sp1-zkvm = { workspace = true, optional = true, features = ["lib"] }
 [features]
 risc0 = ["dep:risc0-zkvm"]
 sp1 = ["dep:sp1-zkvm"]
-smt = ["dep:sparse-merkle-tree"]
+smt = ["dep:sparse-merkle-tree", "dep:sha2"]
+secp = ["dep:sha2"]
 tracing = ["dep:tracing"]
 full-model = ["hyli-model/full"]

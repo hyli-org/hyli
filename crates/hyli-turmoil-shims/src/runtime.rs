@@ -83,6 +83,7 @@ impl LongTasksRuntime {
                 // Limit the number of threads arbitrarily to lower the maximal impact on the whole node
                 .worker_threads(threads)
                 .thread_name(thread_name)
+                .enable_time()
                 .build()
                 .expect("Failed to create hashing runtime"),
         )))

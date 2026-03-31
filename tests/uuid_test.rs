@@ -159,11 +159,21 @@ async fn test_uuid_registration() {
 
     ctx.send_proof_single(uuid_proof.clone()).await.unwrap();
 
+    let proof_verifiers = hyli::verifier_workers::ProofVerifierService::from_config(
+        &hyli::utils::conf::VerifierWorkersConf {
+            enabled: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     let outputs = verify_proof(
+        &proof_verifiers,
         &uuid_proof.proof,
         &Verifier(hyli_model::verifiers::RISC0_3.to_string()),
         &ProgramId(UUID_TLD_ID.to_vec()),
     )
+    .await
     .expect("Must validate proof");
 
     assert_eq!(outputs, std::slice::from_ref(&expected_output));

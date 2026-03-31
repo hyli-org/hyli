@@ -70,7 +70,8 @@ fn parse_noir_output_v1(version: u32, fields: &mut VecDeque<String>) -> Result<H
         initial_state: StateCommitment(initial_state),
         next_state: StateCommitment(next_state),
         identity: identity.into(),
-        tx_hash: TxHash::from_hex(&tx_hash).context("invalid tx_hash hex")?,
+        tx_hash: TxHash::from_hex(&tx_hash)
+            .map_err(|e| anyhow::anyhow!("invalid tx_hash hex: {e}"))?,
         tx_ctx: None,
         index: BlobIndex(index as usize),
         blobs,
