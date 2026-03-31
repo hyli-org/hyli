@@ -12,5 +12,5 @@ rust-version = { workspace = true }
 anyhow = { workspace = true }
 borsh = { workspace = true }
 hyli-model = { workspace = true, default-features = false, features = ["std"] }
-tokio = { workspace = true, features = ["io-std", "io-util"] }
+tokio = { workspace = true, features = ["io-std", "io-util", "net"] }
 tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }

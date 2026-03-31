@@ -87,5 +87,5 @@ jobs:
       - id: crate-list
         name: List workspace crates
         run: |
-          CRATES=$(cargo metadata --no-deps --format-version=1 | jq -c '[.packages[].name]')
+          CRATES=$(cargo metadata --no-deps --format-version=1 | jq -c '[.packages[] | select(.targets[] | .kind[] | . == "lib" or . == "proc-macro") | .name]')
           echo "crates=$CRATES" >> $GITHUB_OUTPUT
