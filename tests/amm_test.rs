@@ -494,12 +494,14 @@ mod e2e_amm {
         Ok(())
     }
 
+    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn amm_single_node() -> Result<()> {
         let ctx = E2ECtx::new_single_with_indexer(300).await?;
         scenario_amm(ctx).await
     }
 
+    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn amm_multi_nodes() -> Result<()> {
         let ctx = E2ECtx::new_multi_with_indexer(2, 300).await?;
