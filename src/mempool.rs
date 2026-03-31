@@ -1,7 +1,7 @@
 //! Mempool logic & pending transaction management.
 
 use crate::{
-    bus::{command_response::Query, BusClientSender},
+    bus::BusClientSender,
     consensus::{CommittedConsensusProposal, ConsensusEvent},
     genesis::GenesisEvent,
     model::*,
@@ -174,7 +174,7 @@ struct MempoolBusClient {
     receiver(ConsensusEvent),
     receiver(GenesisEvent),
     receiver(NodeStateEvent),
-    receiver(Query<QueryNewCut, Cut>),
+    query(QueryNewCut, Cut),
 }
 }
 

@@ -78,18 +78,20 @@ impl RunPg {
         }
 
         info!("🐘 Starting postgres DB with default settings for the indexer");
-        let fixed_port: Option<u16> = std::env::var("HYLI_PG_HOST_PORT")
-            .ok()
-            .and_then(|v| v.parse().ok());
         let mut pg_builder = Postgres::default().with_tag("17-alpine").with_cmd([
             "postgres",
             "-c",
             "log_statement=all",
         ]);
+
+        let fixed_port: Option<u16> = std::env::var("HYLI_PG_HOST_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok());
         if let Some(port) = fixed_port {
             info!("🐘 Using fixed postgres host port {}", port);
             pg_builder = pg_builder.with_mapped_port(port, 5432u16.into());
         }
+
         let pg = pg_builder.start().await?;
 
         config.database_url = format!(

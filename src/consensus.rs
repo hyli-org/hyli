@@ -36,7 +36,6 @@ use std::ops::Deref;
 use std::ops::DerefMut;
 use std::time::Duration;
 use std::{collections::HashMap, collections::VecDeque, default::Default, path::PathBuf};
-use tokio::time::interval;
 use tracing::{debug, info, trace};
 
 pub mod api;
@@ -56,7 +55,6 @@ pub use network::*;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ConsensusCommand {
-    TimeoutTick,
     StartNewSlot(Option<TimestampMs>), // If none, may delay, if some, may delay up to that timestamp
 }
 
@@ -94,9 +92,9 @@ receiver(ConsensusCommand),
 receiver(GenesisEvent),
 receiver(NodeStateEvent),
 receiver(MsgWithHeader<ConsensusNetMessage>),
-receiver(Query<QueryConsensusInfo, ConsensusInfo>),
-receiver(Query<QueryConsensusStakingState, Staking>),
-receiver(Query<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse>),
+query(QueryConsensusInfo, ConsensusInfo),
+query(QueryConsensusStakingState, Staking),
+query(QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse),
 }
 }
 
@@ -220,11 +218,15 @@ impl Consensus {
     }
 
     fn is_in_timeout_phase(&self) -> bool {
-        self.bft_round_state.timeout.requests.iter().any(|r| {
-            r.0.msg.0 == self.bft_round_state.slot
-                && r.0.msg.1 == self.bft_round_state.view
-                && &r.0.signature.validator == self.crypto.validator_pubkey()
-        })
+        !matches!(
+            self.bft_round_state.timeout.state,
+            role_timeout::TimeoutState::Voting
+        )
+    }
+
+    fn schedule_next_timeout(&mut self) {
+        self.bft_round_state.timeout.next_scheduled =
+            role_timeout::ScheduledTimeout::sleep(self.config.consensus.timeout_after);
     }
 
     fn cache_timeout_certificate(
@@ -301,7 +303,7 @@ impl Consensus {
 
         // Reset some state
         self.bft_round_state.leader = LeaderState::default();
-        self.bft_round_state.timeout.requests.clear();
+        self.bft_round_state.timeout.reset_for_new_round();
 
         match ticket {
             // We finished the round with a committed proposal for the slot
@@ -385,16 +387,12 @@ impl Consensus {
             .at_round(self.bft_round_state.slot, self.bft_round_state.view);
 
         let round_leader = self.round_leader()?;
+        self.schedule_next_timeout();
         if round_leader == *self.crypto.validator_pubkey() {
             self.set_state_tag(StateTag::Leader);
             debug!("👑 I'm the new leader! 👑")
         } else {
             self.set_state_tag(StateTag::Follower);
-            self.store
-                .bft_round_state
-                .timeout
-                .state
-                .schedule_next(TimestampMsClock::now(), self.config.consensus.timeout_after);
         }
 
         Ok(())
@@ -761,7 +759,7 @@ impl Consensus {
                             ..Default::default()
                         });
 
-                        self.bft_round_state.timeout.requests.clear();
+                        self.bft_round_state.timeout.reset_for_new_round();
                     }
                 }
                 self.record_consensus_state_metric();
@@ -772,7 +770,6 @@ impl Consensus {
 
     async fn handle_command(&mut self, msg: ConsensusCommand) -> Result<()> {
         match msg {
-            ConsensusCommand::TimeoutTick => self.on_timeout_tick(),
             ConsensusCommand::StartNewSlot(may_delay) => {
                 self.start_round(TimestampMsClock::now(), may_delay).await?;
                 Ok(())
@@ -845,10 +842,7 @@ impl Consensus {
                         }
 
                         // Schedule timeout for both leader and follower to ensure recovery from stuck states
-                        self.store.bft_round_state.timeout.state.schedule_next(
-                            TimestampMsClock::now(),
-                            self.config.consensus.timeout_after,
-                        );
+                        self.schedule_next_timeout();
 
                         // Send a CommitConsensusProposal for the genesis block
                         _ = log_error!(self
@@ -874,7 +868,7 @@ impl Consensus {
                         // TODO: this logic can be improved.
                         self.set_state_tag(StateTag::Joining);
                         // Set up an initial timeout to ensure we don't get stuck if we miss commits
-                        self.store.bft_round_state.timeout.state.schedule_next(TimestampMsClock::now(), self.config.consensus.timeout_after);
+                        self.schedule_next_timeout();
 
                         break;
                     },
@@ -899,11 +893,11 @@ impl Consensus {
         );
         self.record_consensus_state_metric();
 
-        let mut timeout_ticker = interval(Duration::from_millis(200));
-        timeout_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
         module_handle_messages! {
             on_self self,
+            _ = self.bft_round_state.timeout.next_scheduled.0.as_mut(), if !self.is_round_leader() => {
+                let _ = log_error!(self.on_timeout_trigger(), "Error while handling timeout tick");
+            }
             listen<NodeStateEvent> event => {
                 let _ = log_error!(self.handle_node_state_event(event).await, "Error while handling data event");
             }
@@ -934,9 +928,6 @@ impl Consensus {
                         self.bft_round_state.state_tag
                     ))
                 }
-            }
-            _ = timeout_ticker.tick() => {
-                _ = log_error!(self.bus.send(ConsensusCommand::TimeoutTick), "Cannot send message over channel");
             }
         };
 
@@ -1159,18 +1150,10 @@ pub mod test {
 
         pub async fn timeout(nodes: &mut [&mut ConsensusTestCtx]) {
             for n in nodes {
+                n.consensus.bft_round_state.timeout.next_scheduled =
+                    role_timeout::ScheduledTimeout::sleep(Duration::ZERO);
                 n.consensus
-                    .store
-                    .bft_round_state
-                    .timeout
-                    .state
-                    .schedule_next(
-                        TimestampMsClock::now() - Duration::from_secs(10),
-                        Duration::from_secs(5),
-                    );
-                n.consensus
-                    .handle_command(ConsensusCommand::TimeoutTick)
-                    .await
+                    .on_timeout_trigger()
                     .unwrap_or_else(|err| panic!("Timeout tick for node {}: {:?}", n.name, err));
             }
         }
@@ -1370,6 +1353,24 @@ pub mod test {
             match rec {
                 Ok(OutboundMessage::BroadcastMessage(net_msg)) => {
                     panic!("{description}: Broadcast message found: {net_msg:?}")
+                }
+                els => {
+                    info!("{description}: Got {:?}", els);
+                }
+            }
+        }
+
+        #[track_caller]
+        pub(crate) fn assert_no_send(&mut self, to: &ValidatorPublicKey, description: &str) {
+            #[allow(clippy::expect_fun_call)]
+            let rec = self.out_receiver.try_recv().map(|msg| msg.into_message());
+
+            match rec {
+                Ok(OutboundMessage::SendMessage {
+                    validator_id,
+                    msg: NetMessage::ConsensusMessage(net_msg),
+                }) if &validator_id == to => {
+                    panic!("{description}: Send message found: {net_msg:?}")
                 }
                 els => {
                     info!("{description}: Got {:?}", els);
