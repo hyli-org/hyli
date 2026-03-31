@@ -45,7 +45,9 @@ pub async fn verify_recursive_proof(
 ) -> Result<(Vec<ProgramId>, Vec<HyliOutput>)> {
     let outputs: (Vec<ProgramId>, Vec<HyliOutput>) = match verifier.0.as_str() {
         _ if proof_verifiers.handles(verifier) => {
-            proof_verifiers.verify_recursive(verifier, proof, program_id).await
+            proof_verifiers
+                .verify_recursive(verifier, proof, program_id)
+                .await
         }
         _ => Err(anyhow::anyhow!(
             "{} recursive verifier not implemented yet (or feature disabled)",

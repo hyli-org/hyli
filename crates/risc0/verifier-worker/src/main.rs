@@ -95,10 +95,7 @@ fn verify_recursive(
         .context("Failed to decode HyliOutput")
 }
 
-fn risc0_proof_verifier(
-    encoded_receipt: &[u8],
-    image_id: &[u8],
-) -> Result<risc0_zkvm::Journal> {
+fn risc0_proof_verifier(encoded_receipt: &[u8], image_id: &[u8]) -> Result<risc0_zkvm::Journal> {
     let receipt = borsh::from_slice::<risc0_zkvm::Receipt>(encoded_receipt)
         .context("Error while decoding Risc0 proof's receipt")?;
 

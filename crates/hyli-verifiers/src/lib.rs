@@ -57,7 +57,6 @@ pub mod cairo_m {
     }
 }
 
-
 pub mod noir {
     use super::*;
 
