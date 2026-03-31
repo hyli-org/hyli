@@ -16,11 +16,9 @@ jobs:
           - crate: hyli-client-sdk
             features: rest,csi,risc0,sp1,turmoil
           - crate: hyli-contract-sdk
-            features: sp1
-          - crate: hyli-contract-sdk
             features: risc0
           - crate: hyli-modules
-            features: risc0,sp1,db
+            features: risc0,db
         crate: ${{ fromJson(needs.list-crates.outputs.crates) }}
 
     needs: list-crates
