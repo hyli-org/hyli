@@ -16,7 +16,6 @@ use crate::{
     genesis::GenesisEvent,
     model::*,
     p2p::network::{OutboundMessage, PeerEvent},
-    shared_storage::gcs::persist_current_chain_timestamp_for_block,
     utils::conf::SharedConf,
 };
 use anyhow::{Context, Result};
@@ -1099,14 +1098,6 @@ impl DataAvailability {
         catchup_joinset: &mut JoinSet<(String, usize)>,
     ) -> anyhow::Result<()> {
         self.store_block(&block)?;
-
-        if block.height() == BlockHeight(0) && self.config.data_proposal_durability.enabled() {
-            persist_current_chain_timestamp_for_block(
-                &self.config.data_directory,
-                block.consensus_proposal.timestamp.0,
-            )
-            .context("Persisting current chain timestamp")?;
-        }
 
         let block_hash = block.hashed();
 

@@ -11,6 +11,7 @@ use borsh::BorshSerialize;
 use fjall::{Database, Keyspace, KeyspaceCreateOptions};
 use futures::FutureExt;
 use hyli_model::LaneId;
+use hyli_modules::node_state::module::load_current_chain_timestamp;
 use tokio::sync::Notify;
 use tracing::{debug, warn};
 
@@ -22,6 +23,7 @@ pub trait DurabilityBackend: Send + Sync {
         lane_id: LaneId,
         dp_hash: DataProposalHash,
         payload: Vec<u8>,
+        current_chain_timestamp: Option<String>,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
 }
 
@@ -33,6 +35,7 @@ impl DurabilityBackend for NullDurabilityBackend {
         _lane_id: LaneId,
         _dp_hash: DataProposalHash,
         _payload: Vec<u8>,
+        _current_chain_timestamp: Option<String>,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>> {
         Box::pin(async { Ok(()) })
     }
@@ -155,6 +158,7 @@ impl Default for PersistenceTracker {
 #[derive(Clone)]
 pub struct DataProposalDurability {
     backend: Arc<dyn DurabilityBackend>,
+    current_chain_timestamp: Arc<RwLock<Option<String>>>,
     persistence_state: SharedPersistenceStateStore,
     in_flight: Arc<RwLock<HashMap<ProposalKey, Arc<PersistenceTracker>>>>,
 }
@@ -163,6 +167,9 @@ impl DataProposalDurability {
     pub fn new(backend: Arc<dyn DurabilityBackend>, data_directory: &Path) -> Result<Self> {
         Ok(Self {
             backend,
+            current_chain_timestamp: Arc::new(RwLock::new(
+                load_current_chain_timestamp(data_directory).ok(),
+            )),
             persistence_state: FjallPersistenceStateStore::shared(data_directory)?,
             in_flight: Arc::new(RwLock::new(HashMap::new())),
         })
@@ -172,9 +179,18 @@ impl DataProposalDurability {
     pub fn new_in_memory(backend: Arc<dyn DurabilityBackend>) -> Self {
         Self {
             backend,
+            current_chain_timestamp: Arc::new(RwLock::new(None)),
             persistence_state: Arc::new(InMemoryPersistenceStateStore::default()),
             in_flight: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    pub fn set_current_chain_timestamp(&self, current_chain_timestamp: String) {
+        let mut guard = self
+            .current_chain_timestamp
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = Some(current_chain_timestamp);
     }
 
     pub fn prime_persistence(&self, lane_id: LaneId, data_proposal: &DataProposal) -> Result<()> {
@@ -202,10 +218,20 @@ impl DataProposalDurability {
 
         let payload = borsh::to_vec(&canonical)?;
         let backend = Arc::clone(&self.backend);
+        let current_chain_timestamp = self
+            .current_chain_timestamp
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         let persistence_state = Arc::clone(&self.persistence_state);
         let in_flight = Arc::clone(&self.in_flight);
         let tracker = Arc::clone(&tracker);
-        let mut upload = backend.upload_data_proposal(lane_id.clone(), dp_hash.clone(), payload);
+        let mut upload = backend.upload_data_proposal(
+            lane_id.clone(),
+            dp_hash.clone(),
+            payload,
+            current_chain_timestamp,
+        );
 
         if let Some(result) = upload.as_mut().now_or_never() {
             Self::finish_persistence_attempt(
@@ -434,7 +460,6 @@ mod tests {
                 gcs_prefix: "test-prefix".to_string(),
                 save_data_proposals: true,
             },
-            current_chain_timestamp: "2026-03-30T14-00-00Z".to_string(),
         })
     }
 
@@ -514,6 +539,7 @@ mod tests {
         let durability = DataProposalDurability::new_in_memory(Arc::new(
             GcsDurabilityBackend::with_runtime(build_test_gcs_runtime(endpoint.clone()).await?),
         ));
+        durability.set_current_chain_timestamp("2026-03-30T14-00-00Z".to_string());
 
         let crypto = BlstCrypto::new("persistence-success").unwrap();
         let lane_id = LaneId::new(crypto.validator_pubkey().clone());
@@ -539,6 +565,7 @@ mod tests {
         let durability = DataProposalDurability::new_in_memory(Arc::new(
             GcsDurabilityBackend::with_runtime(build_test_gcs_runtime(endpoint.clone()).await?),
         ));
+        durability.set_current_chain_timestamp("2026-03-30T14-00-00Z".to_string());
 
         let crypto = BlstCrypto::new("persistence-failure").unwrap();
         let lane_id = LaneId::new(crypto.validator_pubkey().clone());
@@ -572,6 +599,7 @@ mod tests {
             )),
             dir.path(),
         )?;
+        durability.set_current_chain_timestamp("2026-03-30T14-00-00Z".to_string());
 
         let crypto = BlstCrypto::new("persistence-reused").unwrap();
         let lane_id = LaneId::new(crypto.validator_pubkey().clone());
@@ -614,9 +642,9 @@ mod tests {
                     gcs_prefix: "test-prefix".to_string(),
                     save_data_proposals: true,
                 },
-                current_chain_timestamp: "2026-03-30T14-00-00Z".to_string(),
             }),
         ));
+        durability.set_current_chain_timestamp("2026-03-30T14-00-00Z".to_string());
 
         let crypto = BlstCrypto::new("persistence-prefix").unwrap();
         let lane_id = LaneId::new(crypto.validator_pubkey().clone());

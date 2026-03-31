@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
+use hyli_modules::node_state::module::load_current_chain_timestamp;
 
 use crate::utils::conf::DataProposalDurabilityConf;
 
@@ -19,10 +20,10 @@ pub async fn durability_backend_for_conf(
     run_fast_catchup: bool,
 ) -> Result<Arc<dyn DurabilityBackend>> {
     if conf.gcs_enabled() {
-        let backend = GcsDurabilityBackend::new(data_directory, conf.clone());
         if run_fast_catchup {
-            backend.initialize().await?;
+            load_current_chain_timestamp(data_directory)?;
         }
+        let backend = GcsDurabilityBackend::new(conf.clone());
         Ok(Arc::new(backend))
     } else if conf.file_enabled() {
         Ok(Arc::new(FileDurabilityBackend::new(

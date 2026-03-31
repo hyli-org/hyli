@@ -52,6 +52,7 @@ impl DurabilityBackend for FileDurabilityBackend {
         lane_id: LaneId,
         dp_hash: DataProposalHash,
         payload: Vec<u8>,
+        _current_chain_timestamp: Option<String>,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>> {
         let backend = self.clone();
         Box::pin(async move {
@@ -73,7 +74,7 @@ mod tests {
         let dp_hash = DataProposal::new_root(lane_id.clone(), vec![]).hashed();
 
         backend
-            .upload_data_proposal(lane_id.clone(), dp_hash.clone(), b"payload".to_vec())
+            .upload_data_proposal(lane_id.clone(), dp_hash.clone(), b"payload".to_vec(), None)
             .await?;
 
         let path = backend.object_path(&lane_id, &dp_hash);

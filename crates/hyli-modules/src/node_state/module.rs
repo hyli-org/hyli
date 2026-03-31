@@ -9,10 +9,11 @@ use crate::modules::admin::{QueryNodeStateStore, QueryNodeStateStoreResponse};
 use crate::modules::files::NODE_STATE_BIN;
 use crate::modules::{module_bus_client, Module, SharedBuildApiCtx};
 use crate::{log_error, log_warn};
-use anyhow::Result;
+use anyhow::{Context, Result};
+use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_bus::modules::ModulePersistOutput;
 use sdk::*;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
 /// NodeStateModule maintains a NodeState,
@@ -57,6 +58,44 @@ pub struct NodeStateCtx {
     pub node_id: String,
     pub data_directory: PathBuf,
     pub api: SharedBuildApiCtx,
+}
+
+pub const CURRENT_CHAIN_TIMESTAMP_BIN: &str = "current_chain_timestamp.bin";
+
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
+pub struct CurrentChainTimestampStore {
+    pub timestamp_folder: String,
+}
+
+pub fn persist_current_chain_timestamp(
+    data_directory: &Path,
+    store: &NodeStateStore,
+) -> Result<Option<(PathBuf, u32)>> {
+    let Some(timestamp_folder) = store.current_chain_timestamp.clone() else {
+        return Ok(None);
+    };
+
+    let file = PathBuf::from(CURRENT_CHAIN_TIMESTAMP_BIN);
+    let checksum = NodeStateModule::save_on_disk::<CurrentChainTimestampStore>(
+        data_directory,
+        &file,
+        &CurrentChainTimestampStore { timestamp_folder },
+    )?;
+
+    Ok(Some((data_directory.join(&file), checksum)))
+}
+
+pub fn load_current_chain_timestamp(data_directory: &Path) -> Result<String> {
+    let store = NodeStateModule::load_from_disk::<CurrentChainTimestampStore>(
+        data_directory,
+        CURRENT_CHAIN_TIMESTAMP_BIN.as_ref(),
+    )?
+    .context("Missing current_chain_timestamp.bin while loading chain metadata")?;
+
+    chrono::NaiveDateTime::parse_from_str(&store.timestamp_folder, "%Y-%m-%dT%H-%M-%SZ")
+        .context("Parsing current chain timestamp")?;
+
+    Ok(store.timestamp_folder)
 }
 
 impl Module for NodeStateModule {
@@ -155,7 +194,15 @@ impl Module for NodeStateModule {
         let file = PathBuf::from(NODE_STATE_BIN);
         let checksum =
             Self::save_on_disk::<NodeStateStore>(&self.data_directory, &file, &self.inner)?;
-        Ok(vec![(self.data_directory.join(file), checksum)])
+        let mut persisted = vec![(self.data_directory.join(file), checksum)];
+
+        if let Some(timestamp_file) =
+            persist_current_chain_timestamp(&self.data_directory, &self.inner.store)?
+        {
+            persisted.push(timestamp_file);
+        }
+
+        Ok(persisted)
     }
 }
 

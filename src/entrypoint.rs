@@ -11,7 +11,6 @@ use crate::{
     model::{api::NodeInfo, ContractName, SharedRunContext},
     p2p::P2P,
     rest::{ApiDoc, RestApi, RestApiRunContext},
-    shared_storage::gcs::persist_current_chain_timestamp_from_node_state,
     single_node_consensus::SingleNodeConsensus,
     tcp_server::TcpServer,
     utils::{
@@ -40,7 +39,7 @@ use hyli_modules::{
         BuildApiContextInner, Module,
     },
     node_state::{
-        module::{NodeStateCtx, NodeStateModule},
+        module::{persist_current_chain_timestamp, NodeStateCtx, NodeStateModule},
         NodeStateStore,
     },
     utils::db::use_fresh_db,
@@ -455,19 +454,23 @@ pub async fn common_main(
                     "Saving node state store"
                 )?;
 
+                let mut persisted = vec![
+                    (consensus_path, consensus_checksum),
+                    (node_state_path, node_state_checksum),
+                ];
+                if let Some(timestamp_file) =
+                    persist_current_chain_timestamp(&config.data_directory, &node_state_store)
+                        .context(
+                            "Persisting current chain timestamp from fast catchup node state",
+                        )?
+                {
+                    persisted.push(timestamp_file);
+                }
+
                 log_error!(
-                    write_manifest(
-                        &config.data_directory,
-                        &[
-                            (consensus_path, consensus_checksum),
-                            (node_state_path, node_state_checksum),
-                        ],
-                    ),
+                    write_manifest(&config.data_directory, &persisted),
                     "Writing checksum manifest for fast catchup stores"
                 )?;
-
-                persist_current_chain_timestamp_from_node_state(&config.data_directory)
-                    .context("Persisting current chain timestamp from fast catchup node state")?;
             } else {
                 let reason = bootstrap_failure_reason
                     .unwrap_or_else(|| "no peer responded successfully".to_string());
@@ -485,8 +488,6 @@ pub async fn common_main(
                 NODE_STATE_BIN,
                 config.data_directory.display()
             );
-            persist_current_chain_timestamp_from_node_state(&config.data_directory)
-                .context("Persisting current chain timestamp from existing node state")?;
         }
     }
 

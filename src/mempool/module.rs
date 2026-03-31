@@ -3,8 +3,11 @@ use hyli_modules::{log_error, module_handle_messages};
 use std::{sync::Arc, time::Duration};
 
 use crate::{
-    consensus::ConsensusEvent, model::*, p2p::network::MsgWithHeader,
-    shared_storage::durability_backend_for_conf, utils::conf::P2pMode,
+    consensus::ConsensusEvent,
+    model::*,
+    p2p::network::MsgWithHeader,
+    shared_storage::{durability_backend_for_conf, gcs::timestamp_to_folder_name},
+    utils::conf::P2pMode,
 };
 
 use client_sdk::tcp_client::TcpServerMessage;
@@ -99,6 +102,12 @@ impl Module for Mempool {
             }
             listen<NodeStateEvent> cmd => {
                 let NodeStateEvent::NewBlock(block) = cmd;
+                if block.signed_block.height() == BlockHeight(0) {
+                    let current_chain_timestamp =
+                        timestamp_to_folder_name(block.signed_block.consensus_proposal.timestamp.0)?;
+                    self.durability
+                        .set_current_chain_timestamp(current_chain_timestamp);
+                }
                 // In this p2p mode we don't receive consensus events so we must update manually.
                 if self.conf.p2p.mode == P2pMode::LaneManager {
                     if let Err(e) = self.staking.process_block(&block.staking_data) {
