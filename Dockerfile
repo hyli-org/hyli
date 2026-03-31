@@ -13,6 +13,7 @@ COPY .cargo/config.toml .cargo/config.toml
 COPY src ./src
 COPY crates ./crates
 RUN cargo build --release -F sp1 -F risc0 -F rate-proxy;
+RUN cargo build --release hyli-jolt-verifier-worker
 
 # RUNNER
 FROM ${BASE_IMAGE} AS runner
