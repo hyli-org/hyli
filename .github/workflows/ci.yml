@@ -63,6 +63,7 @@ jobs:
 
   coverage:
     name: Unit tests coverage
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: arc-runner-set
     timeout-minutes: 15
     strategy:
