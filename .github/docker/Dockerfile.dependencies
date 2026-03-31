@@ -16,4 +16,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=planner /usr/src/hyli/recipe.json recipe.json
 
 # Build dependencies
-RUN cargo chef cook --release --features sp1,risc0 --recipe-path recipe.json
+RUN cargo chef cook --release --features risc0 --recipe-path recipe.json
