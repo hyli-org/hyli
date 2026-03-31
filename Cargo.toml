@@ -339,6 +339,10 @@ test-log = { version = "0.2.17", features = [
 tokio-stream = "0.1.17"
 tempfile = "3.20.0"
 assert-json-diff = "2.0.2"
+risc0-recursion = { workspace = true }
+risc0-zkvm = { workspace = true, default-features = false, features = [
+  "client",
+] }
 signal-child = "1.0.6"
 
 [features]
