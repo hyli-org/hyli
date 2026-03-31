@@ -20,7 +20,9 @@ COPY Cargo.toml Cargo.lock ./
 COPY .cargo/config.toml .cargo/config.toml
 COPY src ./src
 COPY crates ./crates
-RUN cargo build --release -F sp1 -F risc0 -F vendored;
+RUN cargo build --release -F risc0 -F rate-proxy -F vendored
+RUN cargo build --release -p hyli-jolt-verifier-worker -F vendored
+RUN cargo build --release -p hyli-sp1-verifier-worker -F vendored
 
 # RUNNER
 FROM --platform=linux/arm64 ${BASE_IMAGE} AS runner
