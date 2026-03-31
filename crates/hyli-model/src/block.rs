@@ -13,6 +13,16 @@ pub struct SignedBlock {
     pub certificate: AggregateSignature,
 }
 
+#[derive(
+    Debug, Serialize, Deserialize, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize, Display,
+)]
+#[display("")]
+pub struct StoredSignedBlock {
+    pub data_proposals: Vec<(LaneId, Vec<DataProposalHash>)>,
+    pub consensus_proposal: ConsensusProposal,
+    pub certificate: AggregateSignature,
+}
+
 impl SignedBlock {
     pub fn parent_hash(&self) -> &ConsensusProposalHash {
         &self.consensus_proposal.parent_hash
@@ -60,6 +70,37 @@ impl SignedBlock {
 impl Hashed<ConsensusProposalHash> for SignedBlock {
     fn hashed(&self) -> ConsensusProposalHash {
         self.consensus_proposal.hashed()
+    }
+}
+
+impl Hashed<ConsensusProposalHash> for StoredSignedBlock {
+    fn hashed(&self) -> ConsensusProposalHash {
+        self.consensus_proposal.hashed()
+    }
+}
+
+impl StoredSignedBlock {
+    pub fn height(&self) -> BlockHeight {
+        BlockHeight(self.consensus_proposal.slot)
+    }
+}
+
+impl From<&SignedBlock> for StoredSignedBlock {
+    fn from(block: &SignedBlock) -> Self {
+        Self {
+            data_proposals: block
+                .data_proposals
+                .iter()
+                .map(|(lane_id, data_proposals)| {
+                    (
+                        lane_id.clone(),
+                        data_proposals.iter().map(|dp| dp.hashed()).collect(),
+                    )
+                })
+                .collect(),
+            consensus_proposal: block.consensus_proposal.clone(),
+            certificate: block.certificate.clone(),
+        }
     }
 }
 

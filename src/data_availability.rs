@@ -117,7 +117,28 @@ pub struct DataAvailability {
     allow_peer_catchup: bool,
 
     // Track blocks to send to each streaming peer (ensures ordering)
-    peer_send_queues: HashMap<String, VecDeque<ConsensusProposalHash>>,
+    peer_send_queues: HashMap<String, PeerSendQueue>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PeerStreamMode {
+    Signed,
+    Stored,
+}
+
+#[derive(Debug)]
+struct PeerSendQueue {
+    mode: PeerStreamMode,
+    hashes: VecDeque<ConsensusProposalHash>,
+}
+
+impl Default for PeerSendQueue {
+    fn default() -> Self {
+        Self {
+            mode: PeerStreamMode::Signed,
+            hashes: VecDeque::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, AsRefStr)]
@@ -707,6 +728,7 @@ impl DataAvailability {
                                 _ = log_error!(
                                     self.start_streaming_to_peer(
                                         start_height,
+                                        PeerStreamMode::Signed,
                                         &mut catchup_joinset,
                                         &socket_addr,
                                         &mut server,
@@ -714,10 +736,38 @@ impl DataAvailability {
                                     "Starting streaming to peer"
                                 );
                             }
+                            DataAvailabilityRequest::StreamStoredFromHeight(start_height) => {
+                                _ = log_error!(
+                                    self.start_streaming_to_peer(
+                                        start_height,
+                                        PeerStreamMode::Stored,
+                                        &mut catchup_joinset,
+                                        &socket_addr,
+                                        &mut server,
+                                    ).await,
+                                    "Starting stored block streaming to peer"
+                                );
+                            }
                             DataAvailabilityRequest::BlockRequest(block_height) => {
                                 _ = log_error!(
-                                    self.handle_block_request(block_height, &socket_addr, &mut server).await,
+                                    self.handle_block_request(
+                                        block_height,
+                                        PeerStreamMode::Signed,
+                                        &socket_addr,
+                                        &mut server
+                                    ).await,
                                     "Handling block request"
+                                );
+                            }
+                            DataAvailabilityRequest::StoredBlockRequest(block_height) => {
+                                _ = log_error!(
+                                    self.handle_block_request(
+                                        block_height,
+                                        PeerStreamMode::Stored,
+                                        &socket_addr,
+                                        &mut server
+                                    ).await,
+                                    "Handling stored block request"
                                 );
                             }
                         }
@@ -790,9 +840,9 @@ impl DataAvailability {
         }
 
         // Get next block from this peer's queue
-        let hash = match self.peer_send_queues.get_mut(&peer_ip) {
-            Some(queue) => match queue.pop_front() {
-                Some(h) => h,
+        let (mode, hash) = match self.peer_send_queues.get_mut(&peer_ip) {
+            Some(queue) => match queue.hashes.pop_front() {
+                Some(h) => (queue.mode, h),
                 None => {
                     // Queue is empty - peer is caught up and waiting for new blocks
                     // Keep them in the map but don't spawn a new task yet
@@ -805,23 +855,25 @@ impl DataAvailability {
                 return Ok(());
             }
         };
-
         debug!("📡  Sending block {} to peer {}", &hash, &peer_ip);
-        if let Ok(Some(signed_block)) = self.blocks.get(&hash) {
-            // Errors will be handled when sending new blocks, ignore here.
-            match server.send(
-                peer_ip.clone(),
-                DataAvailabilityEvent::SignedBlock(signed_block),
-                vec![],
-            ) {
+        let event = match mode {
+            PeerStreamMode::Signed => self
+                .blocks
+                .get(&hash)?
+                .map(DataAvailabilityEvent::SignedBlock),
+            PeerStreamMode::Stored => self
+                .blocks
+                .get_stored(&hash)?
+                .map(DataAvailabilityEvent::StoredSignedBlock),
+        };
+        if let Some(event) = event {
+            match server.send(peer_ip.clone(), event, vec![]) {
                 Ok(()) => {
-                    // Successfully sent, continue with next block
                     catchup_joinset.spawn(async move { (peer_ip, 0) });
                 }
                 Err(_) => {
-                    // Retry sending the same block (put it back at front of queue)
                     if let Some(queue) = self.peer_send_queues.get_mut(&peer_ip) {
-                        queue.push_front(hash);
+                        queue.hashes.push_front(hash);
                     }
                     catchup_joinset.spawn(async move {
                         tokio::time::sleep(Duration::from_millis(100 * (retries as u64))).await;
@@ -843,6 +895,7 @@ impl DataAvailability {
     async fn handle_block_request(
         &mut self,
         block_height: BlockHeight,
+        mode: PeerStreamMode,
         socket_addr: &str,
         server: &mut DataAvailabilityServer,
     ) -> Result<()> {
@@ -852,28 +905,32 @@ impl DataAvailability {
         );
 
         // Check if block exists in storage
-        match self.blocks.get_by_height(block_height) {
-            Ok(Some(block)) => {
+        let response = match mode {
+            PeerStreamMode::Signed => self
+                .blocks
+                .get_by_height(block_height)?
+                .map(DataAvailabilityEvent::SignedBlock),
+            PeerStreamMode::Stored => self
+                .blocks
+                .get_stored_by_height(block_height)?
+                .map(DataAvailabilityEvent::StoredSignedBlock),
+        };
+
+        match response {
+            Some(event) => {
                 debug!(
                     "📦 Found block at height {}, sending to {}",
                     block_height, socket_addr
                 );
-                // Send immediately - this is inserted next in the send queue
-                if let Err(e) = server.send(
-                    socket_addr.to_string(),
-                    DataAvailabilityEvent::SignedBlock(block),
-                    vec![],
-                ) {
+                if let Err(e) = server.send(socket_addr.to_string(), event, vec![]) {
                     warn!(
                         "📦 Error while responding to block request at height {} for {}: {:#}. Dropping socket.",
                         block_height, socket_addr, e
                     );
                     server.drop_peer_stream(socket_addr.to_string());
-                    return Ok(());
                 }
             }
-            Ok(None) => {
-                // Block not in storage - this is a gap
+            None => {
                 error!(
                     "📦 Block at height {} not found in storage, sending BlockNotFound to {}",
                     block_height, socket_addr
@@ -888,25 +945,6 @@ impl DataAvailability {
                         block_height, socket_addr, e
                     );
                     server.drop_peer_stream(socket_addr.to_string());
-                    return Ok(());
-                }
-            }
-            Err(e) => {
-                error!(
-                    "📦 Error retrieving block at height {}: {:#}",
-                    block_height, e
-                );
-                if let Err(e) = server.send(
-                    socket_addr.to_string(),
-                    DataAvailabilityEvent::BlockNotFound(block_height),
-                    vec![],
-                ) {
-                    warn!(
-                        "📦 Error while responding BlockNotFound at height {} for {}: {:#}. Dropping socket.",
-                        block_height, socket_addr, e
-                    );
-                    server.drop_peer_stream(socket_addr.to_string());
-                    return Ok(());
                 }
             }
         }
@@ -1107,8 +1145,8 @@ impl DataAvailability {
         // Add new block to all streaming peer queues to ensure ordering
         // (instead of broadcasting which can cause out-of-order delivery)
         for (peer, queue) in self.peer_send_queues.iter_mut() {
-            let was_empty = queue.is_empty();
-            queue.push_back(block_hash.clone());
+            let was_empty = queue.hashes.is_empty();
+            queue.hashes.push_back(block_hash.clone());
 
             // If queue was empty (peer was caught up), restart their send task
             if was_empty {
@@ -1123,7 +1161,7 @@ impl DataAvailability {
                     "Appending block {} to queue for peer {} (queue size: {})",
                     block_hash,
                     peer,
-                    queue.len()
+                    queue.hashes.len()
                 );
             }
         }
@@ -1142,6 +1180,7 @@ impl DataAvailability {
     async fn start_streaming_to_peer(
         &mut self,
         start_height: BlockHeight,
+        mode: PeerStreamMode,
         catchup_joinset: &mut JoinSet<(String, usize)>,
         peer_ip: &str,
         server: &mut DataAvailabilityServer,
@@ -1206,8 +1245,13 @@ impl DataAvailability {
 
         // Store queue for this peer - new blocks will be appended here
         let peer_ip_string = peer_ip.to_string();
-        self.peer_send_queues
-            .insert(peer_ip_string.clone(), processed_block_hashes);
+        self.peer_send_queues.insert(
+            peer_ip_string.clone(),
+            PeerSendQueue {
+                mode,
+                hashes: processed_block_hashes,
+            },
+        );
 
         // Start the send task for this peer
         catchup_joinset.spawn(async move { (peer_ip_string, 0) });

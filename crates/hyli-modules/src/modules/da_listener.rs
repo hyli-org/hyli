@@ -677,6 +677,7 @@ impl<P: BlockProcessor + 'static> SignedDAListener<P> {
             DataAvailabilityEvent::SignedBlock(block) => {
                 self.handle_signed_block(block).await?;
             }
+            DataAvailabilityEvent::StoredSignedBlock(_) => {}
             DataAvailabilityEvent::MempoolStatusEvent(status) => {
                 self.processor.process_mempool_status(status).await?;
             }

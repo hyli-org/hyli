@@ -1,14 +1,10 @@
 use anyhow::{anyhow, bail, Context, Result};
-use borsh::{BorshDeserialize, BorshSerialize};
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, Slice};
 use google_cloud_storage::{
     client::{Storage as GcsStorageClient, StorageControl},
     model::ListObjectsRequest,
 };
-use hyli_model::{
-    AggregateSignature, BlockHeight, ConsensusProposal, ConsensusProposalHash, DataProposalHash,
-    Hashed, LaneId, SignedBlock,
-};
+use hyli_model::{BlockHeight, ConsensusProposalHash, Hashed, SignedBlock, StoredSignedBlock};
 use hyli_modules::{
     node_state::module::load_current_chain_timestamp, utils::fjall_metrics::FjallMetrics,
 };
@@ -26,13 +22,6 @@ use crate::{
     mempool::proposal_storage::ProposalStorage, shared_storage::gcs::timestamp_to_folder_name,
     utils::conf::DataProposalDurabilityConf,
 };
-
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
-struct StoredSignedBlock {
-    data_proposals: Vec<(LaneId, Vec<DataProposalHash>)>,
-    consensus_proposal: ConsensusProposal,
-    certificate: AggregateSignature,
-}
 
 struct FjallHashKey(ConsensusProposalHash);
 struct FjallHeightKey([u8; 8]);
@@ -100,9 +89,7 @@ impl AsRef<[u8]> for FjallHeightKey {
 
 impl FjallValue {
     fn new_with_block(block: &SignedBlock) -> Result<Self> {
-        Ok(Self(borsh::to_vec(&StoredSignedBlock::from_signed_block(
-            block,
-        ))?))
+        Ok(Self(borsh::to_vec(&StoredSignedBlock::from(block))?))
     }
 
     fn new_with_block_hash(block_hash: &ConsensusProposalHash) -> Result<Self> {
@@ -116,53 +103,37 @@ impl AsRef<[u8]> for FjallValue {
     }
 }
 
-impl StoredSignedBlock {
-    fn from_signed_block(block: &SignedBlock) -> Self {
-        Self {
-            data_proposals: block
-                .data_proposals
-                .iter()
-                .map(|(lane_id, data_proposals)| {
-                    (
-                        lane_id.clone(),
-                        data_proposals.iter().map(|dp| dp.hashed()).collect(),
-                    )
+fn hydrate_stored_signed_block(
+    stored: StoredSignedBlock,
+    proposals: &ProposalStorage,
+) -> Result<SignedBlock> {
+    let block_hash = stored.consensus_proposal.hashed();
+    let data_proposals = stored
+        .data_proposals
+        .into_iter()
+        .map(|(lane_id, hashes)| {
+            let data_proposals = hashes
+                .into_iter()
+                .map(|dp_hash| {
+                    proposals
+                        .get_dp_by_hash(&lane_id, &dp_hash)?
+                        .with_context(|| {
+                            format!(
+                                "missing proposal {dp_hash} for lane {} while hydrating block {}",
+                                lane_id, block_hash
+                            )
+                        })
                 })
-                .collect(),
-            consensus_proposal: block.consensus_proposal.clone(),
-            certificate: block.certificate.clone(),
-        }
-    }
-
-    fn hydrate(self, proposals: &ProposalStorage) -> Result<SignedBlock> {
-        let block_hash = self.consensus_proposal.hashed();
-        let data_proposals = self
-            .data_proposals
-            .into_iter()
-            .map(|(lane_id, hashes)| {
-                let data_proposals = hashes
-                    .into_iter()
-                    .map(|dp_hash| {
-                        proposals
-                            .get_dp_by_hash(&lane_id, &dp_hash)?
-                            .with_context(|| {
-                                format!(
-                                    "missing proposal {dp_hash} for lane {} while hydrating block {}",
-                                    lane_id, block_hash
-                                )
-                            })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                Ok((lane_id, data_proposals))
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        Ok(SignedBlock {
-            data_proposals,
-            consensus_proposal: self.consensus_proposal,
-            certificate: self.certificate,
+                .collect::<Result<Vec<_>>>()?;
+            Ok((lane_id, data_proposals))
         })
-    }
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(SignedBlock {
+        data_proposals,
+        consensus_proposal: stored.consensus_proposal,
+        certificate: stored.certificate,
+    })
 }
 
 impl FjallBlocks {
@@ -203,7 +174,11 @@ impl FjallBlocks {
 
     fn decode_block(&self, item: Slice) -> Result<SignedBlock> {
         let stored = borsh::from_slice::<StoredSignedBlock>(&item)?;
-        stored.hydrate(&self.proposals)
+        hydrate_stored_signed_block(stored, &self.proposals)
+    }
+
+    fn decode_stored_block(item: Slice) -> Result<StoredSignedBlock> {
+        borsh::from_slice::<StoredSignedBlock>(&item).map_err(Into::into)
     }
 
     fn decode_block_hash(item: Slice) -> Result<ConsensusProposalHash> {
@@ -280,6 +255,13 @@ impl FjallBlocks {
         res
     }
 
+    fn get_stored(&self, block_hash: &ConsensusProposalHash) -> Result<Option<StoredSignedBlock>> {
+        let Some(item) = self.by_hash.get(FjallHashKey(block_hash.clone()))? else {
+            return Ok(None);
+        };
+        Self::decode_stored_block(item).map(Some)
+    }
+
     fn get_by_height(&self, height: BlockHeight) -> Result<Option<SignedBlock>> {
         let start = Instant::now();
         let Some(bytes) = self.by_height.get(FjallHeightKey::new(height))? else {
@@ -290,6 +272,14 @@ impl FjallBlocks {
         let res = self.get(&block_hash);
         self.record_op("get_by_height", "by_height", start.elapsed());
         res
+    }
+
+    fn get_stored_by_height(&self, height: BlockHeight) -> Result<Option<StoredSignedBlock>> {
+        let Some(bytes) = self.by_height.get(FjallHeightKey::new(height))? else {
+            return Ok(None);
+        };
+        let block_hash = Self::decode_block_hash(bytes)?;
+        self.get_stored(&block_hash)
     }
 
     fn has_by_height(&self, height: BlockHeight) -> Result<bool> {
@@ -584,7 +574,7 @@ impl GcsBlocks {
             }
         }
 
-        let stored = StoredSignedBlock::from_signed_block(&block);
+        let stored = StoredSignedBlock::from(&block);
         let object_name =
             block_object_name(&self.gcs_prefix, &current_chain_timestamp, block.height());
         let payload = borsh::to_vec(&stored)?;
@@ -630,8 +620,19 @@ impl GcsBlocks {
             .by_hash
             .get(block_hash)
             .cloned()
-            .map(|stored| stored.hydrate(&self.proposals))
+            .map(|stored| hydrate_stored_signed_block(stored, &self.proposals))
             .transpose()
+    }
+
+    fn get_stored(&self, block_hash: &ConsensusProposalHash) -> Result<Option<StoredSignedBlock>> {
+        self.ensure_index_loaded()?;
+        Ok(self
+            .state
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .by_hash
+            .get(block_hash)
+            .cloned())
     }
 
     fn get_by_height(&self, height: BlockHeight) -> Result<Option<SignedBlock>> {
@@ -648,6 +649,24 @@ impl GcsBlocks {
             .map(|hash| self.get(hash))
             .transpose()
             .map(|opt| opt.flatten())
+    }
+
+    fn get_stored_by_height(&self, height: BlockHeight) -> Result<Option<StoredSignedBlock>> {
+        self.ensure_index_loaded()?;
+        Ok(self
+            .state
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .by_height
+            .get(&height)
+            .and_then(|hash| {
+                self.state
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .by_hash
+                    .get(hash)
+                    .cloned()
+            }))
     }
 
     fn has_by_height(&self, height: BlockHeight) -> Result<bool> {
@@ -699,7 +718,7 @@ impl GcsBlocks {
             let hash = guard.by_height.last_key_value()?.1.clone();
             guard.by_hash.get(&hash).cloned()?
         };
-        stored.hydrate(&self.proposals).ok()
+        hydrate_stored_signed_block(stored, &self.proposals).ok()
     }
 
     fn highest(&self) -> BlockHeight {
@@ -802,10 +821,27 @@ impl Blocks {
         }
     }
 
+    pub fn get_stored(
+        &self,
+        block_hash: &ConsensusProposalHash,
+    ) -> Result<Option<StoredSignedBlock>> {
+        match &self.backend {
+            BlocksBackend::Fjall(inner) => inner.get_stored(block_hash),
+            BlocksBackend::Gcs(inner) => inner.get_stored(block_hash),
+        }
+    }
+
     pub fn get_by_height(&self, height: BlockHeight) -> Result<Option<SignedBlock>> {
         match &self.backend {
             BlocksBackend::Fjall(inner) => inner.get_by_height(height),
             BlocksBackend::Gcs(inner) => inner.get_by_height(height),
+        }
+    }
+
+    pub fn get_stored_by_height(&self, height: BlockHeight) -> Result<Option<StoredSignedBlock>> {
+        match &self.backend {
+            BlocksBackend::Fjall(inner) => inner.get_stored_by_height(height),
+            BlocksBackend::Gcs(inner) => inner.get_stored_by_height(height),
         }
     }
 

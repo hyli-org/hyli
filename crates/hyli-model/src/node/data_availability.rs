@@ -201,13 +201,18 @@ pub enum NodeStateEvent {
 pub enum DataAvailabilityRequest {
     /// Start streaming blocks from a given height
     StreamFromHeight(BlockHeight),
+    /// Start streaming stored signed blocks from a given height
+    StreamStoredFromHeight(BlockHeight),
     /// Request a specific block by height (prioritized)
     BlockRequest(BlockHeight),
+    /// Request a specific stored signed block by height (prioritized)
+    StoredBlockRequest(BlockHeight),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize, TcpMessageLabel)]
 pub enum DataAvailabilityEvent {
     SignedBlock(SignedBlock),
+    StoredSignedBlock(StoredSignedBlock),
     MempoolStatusEvent(MempoolStatusEvent),
     /// Block not found at the requested height
     BlockNotFound(BlockHeight),
