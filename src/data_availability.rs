@@ -37,7 +37,10 @@ impl Module for DataAvailability {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> anyhow::Result<Self> {
         let bus = DABusClient::new_from_bus(bus.new_handle()).await;
 
-        let mut blocks = Blocks::new(&ctx.config.data_directory)?;
+        let mut blocks = Blocks::new_with_durability(
+            &ctx.config.data_directory,
+            &ctx.config.data_proposal_durability,
+        )?;
         blocks.set_metrics_context(ctx.config.id.clone());
         let highest_block = blocks.highest();
 
