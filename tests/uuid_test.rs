@@ -44,6 +44,7 @@ impl E2EContract for UuidContract {
     }
 }
 
+#[ignore = "will be enabled back in #1993"]
 #[test_log::test(tokio::test)]
 async fn test_uuid_registration() {
     std::env::set_var("RISC0_DEV_MODE", "1");

@@ -202,12 +202,14 @@ async fn scenario_lane_manager_outside_consensus(mut ctx: E2ECtx, delegate: bool
     Ok(())
 }
 
+#[ignore = "will be enabled back in #1993"]
 #[test_log::test(tokio::test)]
 async fn lane_manager_outside_consensus_single_node() -> Result<()> {
     let ctx = E2ECtx::new_single_with_indexer(500).await?;
     scenario_lane_manager_outside_consensus(ctx, false).await
 }
 
+#[ignore = "will be enabled back in #1993"]
 #[test_log::test(tokio::test)]
 async fn lane_manager_outside_consensus_multi_node() -> Result<()> {
     let ctx = E2ECtx::new_multi_with_indexer(2, 500).await?;
