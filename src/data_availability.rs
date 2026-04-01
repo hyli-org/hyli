@@ -1996,6 +1996,7 @@ pub mod tests {
                     assert_eq!(height.0, 100, "Should be BlockNotFound for block 100");
                     received_block_not_found = true;
                 }
+                DataAvailabilityEvent::StoredSignedBlock(_) => {}
                 DataAvailabilityEvent::MempoolStatusEvent(_) => {}
             }
 

@@ -246,7 +246,11 @@ impl StoredDaIndexerClient {
     }
 
     async fn emit_reconstructed_block(&mut self, block: StoredSignedBlock) -> Result<()> {
-        let signed_block = self.reconstruct_signed_block(block).await?;
+        let block_height = block.height();
+        let signed_block = self
+            .reconstruct_signed_block(block)
+            .await
+            .with_context(|| format!("Reconstructing stored signed block {block_height}"))?;
         self.bus
             .send_waiting_if_full(DataEvent::OrderedSignedBlock(signed_block))
             .await
@@ -263,8 +267,13 @@ impl StoredDaIndexerClient {
             let mut proposals = Vec::with_capacity(hashes.len());
             for dp_hash in hashes {
                 proposals.push(
-                    self.fetch_data_proposal(&current_chain_timestamp, lane_id, dp_hash)
-                        .await?,
+                    self.fetch_data_proposal(
+                        block.height(),
+                        &current_chain_timestamp,
+                        lane_id,
+                        dp_hash,
+                    )
+                    .await?,
                 );
             }
             data_proposals.push((lane_id.clone(), proposals));
@@ -302,33 +311,48 @@ impl StoredDaIndexerClient {
 
     async fn fetch_data_proposal(
         &self,
+        block_height: BlockHeight,
         current_chain_timestamp: &str,
         lane_id: &LaneId,
         dp_hash: &hyli_model::DataProposalHash,
     ) -> Result<DataProposal> {
+        let object_name = data_proposal_object_name(
+            &self.config.gcs_conf.gcs_prefix,
+            current_chain_timestamp,
+            lane_id,
+            dp_hash,
+        );
         let mut reader = self
             .gcs_client
             .read_object(
                 bucket_path(&self.config.gcs_conf.gcs_bucket),
-                data_proposal_object_name(
-                    &self.config.gcs_conf.gcs_prefix,
-                    current_chain_timestamp,
-                    lane_id,
-                    dp_hash,
-                ),
+                object_name.clone(),
             )
             .send()
-            .await?;
+            .await
+            .with_context(|| {
+                format!(
+                    "Fetching data proposal for block {block_height} from GCS object {}/{} (lane {}, hash {})",
+                    self.config.gcs_conf.gcs_bucket, object_name, lane_id, dp_hash
+                )
+            })?;
         let mut bytes = Vec::new();
         while let Some(chunk) = reader.next().await.transpose()? {
             bytes.extend_from_slice(&chunk);
         }
-        let proposal = borsh::from_slice::<DataProposal>(&bytes)
-            .context("Deserializing data proposal from GCS")?;
+        let proposal = borsh::from_slice::<DataProposal>(&bytes).with_context(|| {
+            format!(
+                "Deserializing data proposal for block {block_height} from GCS object {}/{}",
+                self.config.gcs_conf.gcs_bucket, object_name
+            )
+        })?;
         if proposal.hashed() != *dp_hash {
             return Err(anyhow!(
-                "Fetched data proposal hash mismatch for lane {}",
-                lane_id
+                "Fetched data proposal hash mismatch for block {} on lane {} from {}/{}",
+                block_height,
+                lane_id,
+                self.config.gcs_conf.gcs_bucket,
+                object_name
             ));
         }
         Ok(proposal)

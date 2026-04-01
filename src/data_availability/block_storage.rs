@@ -983,8 +983,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn blocks_default_to_fjall_without_bucket() -> Result<()> {
+    #[test_log::test(tokio::test)]
+    async fn blocks_default_to_fjall_without_bucket() -> Result<()> {
         let tmpdir = tempfile::tempdir()?;
         let blocks = Blocks::new_with_durability(
             tmpdir.path(),
@@ -993,7 +993,8 @@ mod tests {
                 gcs_prefix: "camelot".to_string(),
                 save_data_proposals: true,
             },
-        )?;
+        )
+        .await?;
 
         assert!(matches!(blocks.backend, BlocksBackend::Fjall(_)));
         Ok(())
