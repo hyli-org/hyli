@@ -7,6 +7,7 @@ use crate::{
     explorer::Explorer,
     genesis::Genesis,
     indexer::Indexer,
+    indexer_da_client::{StoredDaIndexerClient, StoredDaIndexerClientCtx},
     mempool::{dissemination::DisseminationManager, Mempool},
     model::{api::NodeInfo, ContractName, SharedRunContext},
     p2p::P2P,
@@ -617,18 +618,33 @@ pub async fn common_main(
 
         handler.build_module::<P2P>(ctx.clone()).await?;
     } else if config.run_indexer {
-        LocalDaReplayer::build_bus_only_source(
-            &mut handler,
-            DAListenerConf {
-                data_directory: config.data_directory.clone(),
-                da_read_from: config.da_read_from.clone(),
-                start_block: None,
-                timeout_client_secs: config.da_timeout_client_secs,
-                da_fallback_addresses: config.da_fallback_addresses.clone(),
-                processor_config: (),
-            },
-        )
-        .await?;
+        if config.data_proposal_durability.gcs_enabled()
+            && !config.da_read_from.starts_with("folder:")
+            && !config.da_read_from.starts_with("blob:")
+        {
+            handler
+                .build_module::<StoredDaIndexerClient>(StoredDaIndexerClientCtx {
+                    data_directory: config.data_directory.clone(),
+                    da_read_from: config.da_read_from.clone(),
+                    da_fallback_addresses: config.da_fallback_addresses.clone(),
+                    timeout_client_secs: config.da_timeout_client_secs,
+                    gcs_conf: config.data_proposal_durability.clone(),
+                })
+                .await?;
+        } else {
+            LocalDaReplayer::build_bus_only_source(
+                &mut handler,
+                DAListenerConf {
+                    data_directory: config.data_directory.clone(),
+                    da_read_from: config.da_read_from.clone(),
+                    start_block: None,
+                    timeout_client_secs: config.da_timeout_client_secs,
+                    da_fallback_addresses: config.da_fallback_addresses.clone(),
+                    processor_config: (),
+                },
+            )
+            .await?;
+        }
     }
 
     if config.websocket.enabled {

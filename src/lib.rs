@@ -24,6 +24,7 @@ pub mod entrypoint;
 pub mod explorer;
 pub mod genesis;
 pub mod indexer;
+pub mod indexer_da_client;
 pub mod mempool;
 pub mod p2p;
 pub mod rest;
