@@ -40,7 +40,8 @@ impl Module for DataAvailability {
         let mut blocks = Blocks::new_with_durability(
             &ctx.config.data_directory,
             &ctx.config.data_proposal_durability,
-        )?;
+        )
+        .await?;
         blocks.set_metrics_context(ctx.config.id.clone());
         let highest_block = blocks.highest();
 
@@ -1294,7 +1295,7 @@ pub mod tests {
         pub async fn new(shared_bus: crate::bus::SharedMessageBus) -> Self {
             let path = tempfile::tempdir().unwrap().keep();
             let tmpdir = path;
-            let blocks = Blocks::new(&tmpdir).unwrap();
+            let blocks = Blocks::new(&tmpdir).await.unwrap();
 
             let bus = super::DABusClient::new_from_bus(shared_bus.new_handle()).await;
             let node_state_bus = NodeStateBusClient::new_from_bus(shared_bus).await;
@@ -1346,10 +1347,10 @@ pub mod tests {
         }
     }
 
-    #[test_log::test]
-    fn test_blocks() -> Result<()> {
+    #[test_log::test(tokio::test)]
+    async fn test_blocks() -> Result<()> {
         let tmpdir = tempfile::tempdir().unwrap().keep();
-        let mut blocks = Blocks::new(&tmpdir).unwrap();
+        let mut blocks = Blocks::new(&tmpdir).await.unwrap();
         let block = SignedBlock::default();
         blocks.put(block.clone())?;
         assert!(blocks.last().unwrap().height() == block.height());
@@ -1362,7 +1363,7 @@ pub mod tests {
     #[test_log::test(tokio::test)]
     async fn test_pop_buffer_large() {
         let tmpdir = tempfile::tempdir().unwrap().keep();
-        let blocks = Blocks::new(&tmpdir).unwrap();
+        let blocks = Blocks::new(&tmpdir).await.unwrap();
 
         let port = find_available_port().await;
         let mut server = DataAvailabilityServer::start(port, "DaServer")
@@ -1415,7 +1416,7 @@ pub mod tests {
     #[test_log::test(tokio::test)]
     async fn test_da_streaming() {
         let tmpdir = tempfile::tempdir().unwrap().keep();
-        let blocks = Blocks::new(&tmpdir).unwrap();
+        let blocks = Blocks::new(&tmpdir).await.unwrap();
 
         let global_bus = crate::bus::SharedMessageBus::new();
         let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
@@ -1907,7 +1908,7 @@ pub mod tests {
     async fn test_block_request_while_streaming() {
         // Create DA server with blocks 0-9 already stored
         let tmpdir = tempfile::tempdir().unwrap().keep();
-        let mut blocks_storage = Blocks::new(&tmpdir).unwrap();
+        let mut blocks_storage = Blocks::new(&tmpdir).await.unwrap();
 
         let global_bus = crate::bus::SharedMessageBus::new();
         let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
@@ -2054,7 +2055,7 @@ pub mod tests {
     #[test_log::test(tokio::test)]
     async fn test_stream_rejected_when_start_height_missing() {
         let tmpdir = tempfile::tempdir().unwrap().keep();
-        let mut blocks_storage = Blocks::new(&tmpdir).unwrap();
+        let mut blocks_storage = Blocks::new(&tmpdir).await.unwrap();
 
         let global_bus = crate::bus::SharedMessageBus::new();
         let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
@@ -2121,7 +2122,7 @@ pub mod tests {
     #[test_log::test(tokio::test)]
     async fn test_stream_rejected_when_requested_range_has_gap() {
         let tmpdir = tempfile::tempdir().unwrap().keep();
-        let mut blocks_storage = Blocks::new(&tmpdir).unwrap();
+        let mut blocks_storage = Blocks::new(&tmpdir).await.unwrap();
 
         let global_bus = crate::bus::SharedMessageBus::new();
         let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
@@ -2465,7 +2466,7 @@ pub mod tests {
     #[test_log::test(tokio::test)]
     async fn test_stream_accepts_when_peer_is_already_up_to_date() {
         let tmpdir = tempfile::tempdir().unwrap().keep();
-        let mut blocks_storage = Blocks::new(&tmpdir).unwrap();
+        let mut blocks_storage = Blocks::new(&tmpdir).await.unwrap();
 
         let global_bus = crate::bus::SharedMessageBus::new();
         let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;

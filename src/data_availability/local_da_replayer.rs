@@ -95,7 +95,7 @@ impl LocalDaReplayer {
     async fn replay_da_storage(&mut self, folder: &str) -> Result<()> {
         info!("Reading blocks from DA {folder}");
 
-        let mut blocks = Blocks::new(&PathBuf::from(folder))?;
+        let mut blocks = Blocks::new(&PathBuf::from(folder)).await?;
         let block_hashes = blocks
             .range(BlockHeight(0), BlockHeight(u64::MAX))
             .collect::<Result<Vec<_>>>()?;

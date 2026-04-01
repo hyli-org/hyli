@@ -376,19 +376,15 @@ impl GcsBlockState {
 }
 
 impl GcsBlocks {
-    fn new(path: &Path, conf: &DataProposalDurabilityConf) -> Result<Self> {
+    async fn new(path: &Path, conf: &DataProposalDurabilityConf) -> Result<Self> {
         let runtime = Arc::new(
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?,
         );
 
-        let (client, control) = runtime.block_on(async {
-            Ok::<_, anyhow::Error>((
-                GcsStorageClient::builder().build().await?,
-                StorageControl::builder().build().await?,
-            ))
-        })?;
+        let client = GcsStorageClient::builder().build().await?;
+        let control = StorageControl::builder().build().await?;
 
         Ok(Self {
             runtime,
@@ -756,15 +752,18 @@ impl GcsBlocks {
 }
 
 impl Blocks {
-    pub fn new(path: &Path) -> Result<Self> {
+    pub async fn new(path: &Path) -> Result<Self> {
         Ok(Self {
             backend: BlocksBackend::Fjall(Box::new(FjallBlocks::new(path)?)),
         })
     }
 
-    pub fn new_with_durability(path: &Path, conf: &DataProposalDurabilityConf) -> Result<Self> {
+    pub async fn new_with_durability(
+        path: &Path,
+        conf: &DataProposalDurabilityConf,
+    ) -> Result<Self> {
         let backend = if should_store_blocks_in_gcs(conf) {
-            BlocksBackend::Gcs(Arc::new(GcsBlocks::new(path, conf)?))
+            BlocksBackend::Gcs(Arc::new(GcsBlocks::new(path, conf).await?))
         } else {
             BlocksBackend::Fjall(Box::new(FjallBlocks::new(path)?))
         };
