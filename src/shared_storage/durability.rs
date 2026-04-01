@@ -193,6 +193,13 @@ impl DataProposalDurability {
         *guard = Some(current_chain_timestamp);
     }
 
+    pub fn has_current_chain_timestamp(&self) -> bool {
+        self.current_chain_timestamp
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_some()
+    }
+
     pub fn prime_persistence(&self, lane_id: LaneId, data_proposal: &DataProposal) -> Result<()> {
         let mut canonical = data_proposal.clone();
         canonical.remove_proofs();

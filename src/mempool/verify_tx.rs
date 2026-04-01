@@ -19,6 +19,7 @@ pub enum DataProposalVerdict {
     Process,
     Empty,
     Wait,
+    WaitForChainTimestamp,
     Vote,
     VotePendingPersistence,
     Refuse,
@@ -65,6 +66,13 @@ impl super::Mempool {
             ) => {
                 debug!(
                     "Ignoring DataProposal {:?} on lane {} (cached verdict)",
+                    received_hash, lane_id
+                );
+                return Ok(());
+            }
+            Some(DataProposalVerdict::WaitForChainTimestamp) => {
+                debug!(
+                    "Still waiting on current_chain_timestamp for DataProposal {:?} on lane {}",
                     received_hash, lane_id
                 );
                 return Ok(());
@@ -147,6 +155,26 @@ impl super::Mempool {
         self.metrics.add_hashed_dp(lane_id);
 
         let data_proposal_hash = data_proposal.hashed();
+        if self.requires_current_chain_timestamp_for_dp_durability()
+            && !self.durability.has_current_chain_timestamp()
+        {
+            self.cached_dp_votes.insert(
+                (lane_id.clone(), data_proposal_hash.clone()),
+                DataProposalVerdict::WaitForChainTimestamp,
+            );
+            debug!(
+                "Buffering DataProposal {} on lane {} until current_chain_timestamp is available",
+                data_proposal_hash, lane_id
+            );
+            self.pending_chain_timestamp_entries
+                .entry(lane_id.clone())
+                .or_default()
+                .entry(data_proposal_hash)
+                .and_modify(|(votes, _)| votes.push(vote.clone()))
+                .or_insert((vec![vote], data_proposal));
+            return Ok(());
+        }
+
         // Overlap durable persistence with proposal processing once we know the canonical hash.
         self.durability
             .prime_persistence(lane_id.clone(), &data_proposal)?;
@@ -160,6 +188,11 @@ impl super::Mempool {
                 warn!(
                     "received empty DataProposal on lane {}, ignoring...",
                     lane_id
+                );
+            }
+            DataProposalVerdict::WaitForChainTimestamp => {
+                unreachable!(
+                    "DataProposal should already have been buffered until current_chain_timestamp exists"
                 );
             }
             DataProposalVerdict::Vote => {
@@ -275,6 +308,9 @@ impl super::Mempool {
             }
             DataProposalVerdict::Wait => {
                 unreachable!("DataProposal has already been processed");
+            }
+            DataProposalVerdict::WaitForChainTimestamp => {
+                unreachable!("DataProposal should be flushed once current_chain_timestamp exists");
             }
             DataProposalVerdict::Vote => {
                 trace!("Send vote for DataProposal");
@@ -592,6 +628,32 @@ impl super::Mempool {
         self.send_vote(lane_id, received_hash.clone(), lane_size)?;
         Ok(true)
     }
+
+    pub(super) async fn flush_pending_chain_timestamp_entries(&mut self) -> Result<()> {
+        if self.pending_chain_timestamp_entries.is_empty() {
+            return Ok(());
+        }
+
+        let pending = std::mem::take(&mut self.pending_chain_timestamp_entries);
+        for (lane_id, entries) in pending {
+            for (data_proposal_hash, (mut votes, data_proposal)) in entries {
+                let Some(vote) = votes.pop() else {
+                    warn!(
+                        "No lane operator vote stored for current_chain_timestamp-buffered proposal {:?}",
+                        data_proposal_hash
+                    );
+                    continue;
+                };
+                debug!(
+                    "Flushing DataProposal {} on lane {} after current_chain_timestamp became available",
+                    data_proposal_hash, lane_id
+                );
+                self.on_hashed_data_proposal(&lane_id, data_proposal, vote)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -606,9 +668,9 @@ pub mod test {
     };
     use hyli_crypto::BlstCrypto;
     use hyli_model::{
-        BlobIndex, BlobProofOutput, ContractName, DataProposalHash, HyliOutput, ProgramId,
-        ProofData, SignedByValidator, Transaction, TransactionData, VerifiedProofTransaction,
-        Verifier,
+        BlobIndex, BlobProofOutput, ContractName, DataProposalHash, HyliOutput, LaneBytesSize,
+        ProgramId, ProofData, SignedByValidator, Transaction, TransactionData,
+        VerifiedProofTransaction, Verifier,
     };
 
     #[test_log::test(tokio::test)]
@@ -760,6 +822,58 @@ pub mod test {
                 .get(&(lane_id, data_proposal.hashed())),
             Some(&DataProposalVerdict::Refuse)
         );
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_buffers_data_proposal_until_current_chain_timestamp_is_available() -> Result<()> {
+        let mut ctx = MempoolTestCtx::new("mempool").await;
+        let mut conf = crate::utils::conf::Conf::default();
+        conf.data_proposal_durability.gcs_bucket = "test-bucket".into();
+        conf.data_proposal_durability.save_data_proposals = true;
+        ctx.mempool.conf = std::sync::Arc::new(conf);
+
+        let lane_id = LaneId::new(ctx.mempool.crypto.validator_pubkey().clone());
+        let data_proposal = DataProposal::new_root(lane_id.clone(), vec![Transaction::default()]);
+        let data_proposal_hash = data_proposal.hashed();
+        let vote = ctx
+            .mempool
+            .crypto
+            .sign((data_proposal_hash.clone(), LaneBytesSize(0)))?;
+
+        ctx.mempool
+            .on_hashed_data_proposal(&lane_id, data_proposal.clone(), vote)
+            .await?;
+
+        assert_eq!(
+            ctx.mempool
+                .cached_dp_votes
+                .get(&(lane_id.clone(), data_proposal_hash.clone())),
+            Some(&DataProposalVerdict::WaitForChainTimestamp)
+        );
+        assert!(ctx
+            .mempool
+            .pending_chain_timestamp_entries
+            .get(&lane_id)
+            .is_some_and(|entries| entries.contains_key(&data_proposal_hash)));
+
+        ctx.mempool
+            .durability
+            .set_current_chain_timestamp("2026-04-01T14-13-55Z".into());
+        ctx.mempool.flush_pending_chain_timestamp_entries().await?;
+
+        assert_eq!(
+            ctx.mempool
+                .cached_dp_votes
+                .get(&(lane_id.clone(), data_proposal_hash.clone())),
+            Some(&DataProposalVerdict::Process)
+        );
+        assert!(ctx
+            .mempool
+            .pending_chain_timestamp_entries
+            .get(&lane_id)
+            .is_none_or(|entries| !entries.contains_key(&data_proposal_hash)));
 
         Ok(())
     }

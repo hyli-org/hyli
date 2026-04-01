@@ -176,6 +176,12 @@ impl super::Mempool {
             trace!("Skipping own-lane DP creation until first CCP is received");
             return Ok(false);
         }
+        if self.requires_current_chain_timestamp_for_dp_durability()
+            && !self.durability.has_current_chain_timestamp()
+        {
+            trace!("Skipping own-lane DP creation until current_chain_timestamp is available");
+            return Ok(false);
+        }
         trace!("🐣 Prepare new owned data proposal");
         let mut started = false;
         let lane_ids: Vec<LaneId> = self.waiting_dissemination_txs.keys().cloned().collect();

@@ -102,6 +102,8 @@ pub struct MempoolStore {
     // Skipped to clear on reset
     #[borsh(skip)]
     buffered_entries: BTreeMap<LaneId, HashMap<DataProposalHash, BufferedEntry>>,
+    #[borsh(skip)]
+    pending_chain_timestamp_entries: BTreeMap<LaneId, HashMap<DataProposalHash, BufferedEntry>>,
     // Skipped to clear on reset
     #[borsh(skip)]
     buffered_votes: BTreeMap<LaneId, BTreeMap<DataProposalHash, Vec<ValidatorDAG>>>,
@@ -229,6 +231,10 @@ pub enum ProcessedDPEvent {
 }
 
 impl Mempool {
+    pub(super) fn requires_current_chain_timestamp_for_dp_durability(&self) -> bool {
+        self.conf.data_proposal_durability.gcs_enabled()
+    }
+
     pub(super) fn restore_inflight_work(&mut self) {
         let txs_to_restore = self
             .inner

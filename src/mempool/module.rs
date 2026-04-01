@@ -107,6 +107,7 @@ impl Module for Mempool {
                         timestamp_to_folder_name(block.signed_block.consensus_proposal.timestamp.0)?;
                     self.durability
                         .set_current_chain_timestamp(current_chain_timestamp);
+                    self.flush_pending_chain_timestamp_entries().await?;
                 }
                 // In this p2p mode we don't receive consensus events so we must update manually.
                 if self.conf.p2p.mode == P2pMode::LaneManager {
