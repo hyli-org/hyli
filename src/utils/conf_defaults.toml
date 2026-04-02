@@ -44,6 +44,7 @@ da_read_from = "127.0.0.1:4141"
 da_timeout_client_secs = 10
 # Fallback DA server addresses for block requests (comma-separated)
 da_fallback_addresses = []
+gcs_stored_block_subscription = ""
 
 [p2p]
 # "FullValidator" runs a full node, "LaneManager" skips consensus, or "None" to disable most modules.

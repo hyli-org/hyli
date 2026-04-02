@@ -249,6 +249,7 @@ hyli-bus = { workspace = true }
 
 
 anyhow = { workspace = true }
+base64 = { workspace = true }
 borsh = { workspace = true, features = ["rc"] }
 chrono = { workspace = true, features = ["std", "serde"] }
 hex = { workspace = true, features = ["std"] }
@@ -267,9 +268,11 @@ clap = { workspace = true, features = ["derive"] }
 config = { workspace = true, default-features = false, features = ["toml"] }
 futures = { workspace = true }
 google-cloud-storage = { workspace = true }
+google-cloud-auth = { version = "1.5", default-features = false }
 indexmap = { workspace = true, features = ["serde"] }
 paste = { workspace = true }
 rand = { workspace = true }
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls"] }
 sqlx = { workspace = true, features = [
   "runtime-tokio",
   "postgres",

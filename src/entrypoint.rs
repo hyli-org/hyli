@@ -7,7 +7,10 @@ use crate::{
     explorer::Explorer,
     genesis::Genesis,
     indexer::Indexer,
-    indexer_da_client::{StoredDaIndexerClient, StoredDaIndexerClientCtx},
+    indexer_da_client::{
+        GcsEventIndexerClient, GcsEventIndexerClientCtx, StoredDaIndexerClient,
+        StoredDaIndexerClientCtx,
+    },
     mempool::{dissemination::DisseminationManager, Mempool},
     model::{api::NodeInfo, ContractName, SharedRunContext},
     p2p::P2P,
@@ -622,7 +625,18 @@ pub async fn common_main(
 
         handler.build_module::<P2P>(ctx.clone()).await?;
     } else if config.run_indexer {
-        if config.data_proposal_durability.gcs_enabled()
+        if !config.gcs_stored_block_subscription.is_empty()
+            && config.data_proposal_durability.gcs_enabled()
+        {
+            handler
+                .build_module::<GcsEventIndexerClient>(GcsEventIndexerClientCtx {
+                    data_directory: config.data_directory.clone(),
+                    timeout_client_secs: config.da_timeout_client_secs,
+                    gcs_conf: config.data_proposal_durability.clone(),
+                    subscription: config.gcs_stored_block_subscription.clone(),
+                })
+                .await?;
+        } else if config.data_proposal_durability.gcs_enabled()
             && !config.da_read_from.starts_with("folder:")
             && !config.da_read_from.starts_with("blob:")
         {

@@ -311,6 +311,8 @@ pub struct Conf {
     pub da_timeout_client_secs: u64,
     /// Fallback DA server addresses for block requests when blocks are missing
     pub da_fallback_addresses: Vec<String>,
+    /// Pub/Sub subscription used by standalone indexers to receive GCS stored-block notifications.
+    pub gcs_stored_block_subscription: String,
 
     /// Websocket configuration
     pub websocket: NodeWebSocketConfig,
