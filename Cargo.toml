@@ -24,6 +24,7 @@ members = [
   "crates/jolt/prover",
   "crates/jolt/verifier-worker",
   "crates/sp1/verifier-worker",
+  "crates/risc0/verifier-worker",
   "crates/hyli-bus",
   "crates/hyli-modules",
   "crates/hyli-tools",
@@ -345,7 +346,7 @@ risc0-zkvm = { workspace = true, default-features = false, features = [
 signal-child = "1.0.6"
 
 [features]
-default = ["risc0", "instrumentation"]
+default = ["instrumentation"]
 
 turmoil = [
   "hyli-net/turmoil",
@@ -355,7 +356,6 @@ turmoil = [
 ]
 
 cairo-m = ["hyli-verifiers/cairo-m"]
-risc0 = ["hyli-verifiers/risc0", "client-sdk/risc0"]
 reth = ["hyli-verifiers/reth"]
 
 # Disable dependency keyring by default, as it requires libdbus
@@ -369,7 +369,6 @@ instrumentation = ["hyli-net/instrumentation", "hyli-modules/instrumentation"]
 
 # Activate this feature to recompile contracts locally (mostly useful for iterating on tests)
 nonreproducible = ["hyli-contracts/nonreproducible"]
-node_local_proving = ["risc0-zkvm/client"]
 
 # Exists purely to trigger for native-tls to build with vendored OpenSSL
 vendored = ["dep:native-tls"]

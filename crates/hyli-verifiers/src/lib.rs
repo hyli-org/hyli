@@ -20,8 +20,6 @@ pub fn verify(
     match verifier.0.as_str() {
         #[cfg(feature = "cairo-m")]
         hyli_model::verifiers::CAIRO_M => cairo_m::verify(proof, program_id),
-        #[cfg(feature = "risc0")]
-        hyli_model::verifiers::RISC0_3 => risc0_1::verify(proof, program_id),
         hyli_model::verifiers::NOIR => noir::verify(proof, program_id),
         #[cfg(feature = "reth")]
         hyli_model::verifiers::RETH => reth::verify(proof, program_id),
@@ -56,74 +54,6 @@ pub mod cairo_m {
         verify_cairo_m::<Blake2sMerkleChannel>(hyli_output_cairo_m.proof, None)?;
 
         Ok(vec![hyli_output_cairo_m.hyli_output])
-    }
-}
-
-#[cfg(feature = "risc0")]
-pub mod risc0_1 {
-    use super::*;
-
-    pub type Risc0ProgramId = [u8; 32];
-    pub type Risc0Journal = Vec<u8>;
-
-    pub fn verify(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<HyliOutput>, Error> {
-        let journal = risc0_proof_verifier(&proof.0, &program_id.0)?;
-        // First try to decode it as a single HyliOutput
-        Ok(
-            match std::panic::catch_unwind(|| journal.decode::<Vec<HyliOutput>>()).unwrap_or(Err(
-                risc0_zkvm::serde::Error::Custom("Failed to decode single HyliOutput".into()),
-            )) {
-                Ok(ho) => ho,
-                Err(_) => {
-                    debug!("Failed to decode Vec<HyliOutput>, trying to decode as HyliOutput");
-                    let hyli_output = journal
-                        .decode::<HyliOutput>()
-                        .context("Failed to extract HyliOuput from Risc0's journal")?;
-
-                    vec![hyli_output]
-                }
-            },
-        )
-    }
-
-    pub fn verify_recursive(
-        proof: &ProofData,
-        program_id: &ProgramId,
-    ) -> Result<(Vec<ProgramId>, Vec<HyliOutput>), Error> {
-        let journal = risc0_proof_verifier(&proof.0, &program_id.0)?;
-        let mut output = journal
-            .decode::<Vec<(Risc0ProgramId, Risc0Journal)>>()
-            .context("Failed to extract HyliOuput from Risc0's journal")?;
-
-        // Doesn't actually work to just deserialize in one go.
-        output
-            .drain(..)
-            .map(|o| {
-                risc0_zkvm::serde::from_slice::<Vec<HyliOutput>, _>(&o.1)
-                    .map(|h| (ProgramId(o.0.to_vec()), h))
-            })
-            .collect::<Result<(Vec<_>, Vec<_>), _>>()
-            .map(|(ids, outputs)| (ids, outputs.into_iter().flatten().collect()))
-            .context("Failed to decode HyliOutput")
-    }
-
-    pub fn risc0_proof_verifier(
-        encoded_receipt: &[u8],
-        image_id: &[u8],
-    ) -> Result<risc0_zkvm::Journal, Error> {
-        let receipt = borsh::from_slice::<risc0_zkvm::Receipt>(encoded_receipt)
-            .context("Error while decoding Risc0 proof's receipt")?;
-
-        let image_bytes: risc0_zkvm::sha::Digest =
-            image_id.try_into().context("Invalid Risc0 image ID")?;
-
-        receipt
-            .verify(image_bytes)
-            .context("Risc0 proof verification failed")?;
-
-        tracing::info!("✅ Risc0 proof verified.");
-
-        Ok(receipt.journal)
     }
 }
 

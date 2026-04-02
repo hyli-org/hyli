@@ -32,6 +32,9 @@ pub struct Args {
 
     #[clap(long, action)]
     pub sp1: bool,
+
+    #[clap(long, action)]
+    pub risc0: bool,
 }
 
 #[cfg(feature = "dhat")]
@@ -125,6 +128,14 @@ async fn inner_main() -> Result<()> {
             backend.enabled = true;
         } else {
             anyhow::bail!("SP1 verifier worker backend not found in config");
+        }
+    }
+
+    if args.risc0 {
+        if let Some(backend) = config.verifier_workers.backends.get_mut("risc0") {
+            backend.enabled = true;
+        } else {
+            anyhow::bail!("Risc0 verifier worker backend not found in config");
         }
     }
 
