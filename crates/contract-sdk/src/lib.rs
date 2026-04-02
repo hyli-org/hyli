@@ -33,6 +33,7 @@ pub mod caller;
 pub mod guest;
 #[cfg(feature = "smt")]
 pub mod merkle_utils;
+#[cfg(feature = "secp")]
 pub mod secp256k1;
 pub mod utils;
 

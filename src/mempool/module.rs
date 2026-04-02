@@ -70,6 +70,7 @@ impl Module for Mempool {
             metrics,
             lanes,
             durability,
+            proof_verifiers: Arc::clone(&ctx.proof_verifiers),
             inner,
         };
         mempool.restore_inflight_work();

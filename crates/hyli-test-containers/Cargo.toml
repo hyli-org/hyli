@@ -1,0 +1,12 @@
+[package]
+name = "hyli-test-containers"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["process", "time"] }

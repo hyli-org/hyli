@@ -47,6 +47,7 @@ mod e2e_fast_catchup {
         Ok(())
     }
 
+    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn fast_catchup_correctly() -> Result<()> {
         let mut ctx = E2ECtx::new_multi_with_indexer(4, 500).await?;

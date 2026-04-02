@@ -69,6 +69,16 @@ impl MempoolTestCtx {
             crypto: crypto.clone().into(),
             start_height: None,
             start_timestamp: utils::TimestampMs(1000000),
+            proof_verifiers: Arc::new(
+                crate::verifier_workers::ProofVerifierService::from_config(
+                    &crate::utils::conf::VerifierWorkersConf {
+                        enabled: false,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap(),
+            ),
         };
 
         // TODO: split module from functionality?
@@ -88,6 +98,16 @@ impl MempoolTestCtx {
                 metrics: MempoolMetrics::global(),
                 durability,
                 lanes,
+                proof_verifiers: Arc::new(
+                    crate::verifier_workers::ProofVerifierService::from_config(
+                        &crate::utils::conf::VerifierWorkersConf {
+                            enabled: false,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .expect("Failed to build ProofVerifierService"),
+                ),
                 inner: MempoolStore::default(),
             },
             dissemination_manager,

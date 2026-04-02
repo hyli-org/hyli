@@ -1210,20 +1210,16 @@ where
 pub mod tests {
     use std::collections::HashSet;
 
+    use crate::clock::TimestampMsClock;
+    use crate::tcp::{p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent};
     use anyhow::Result;
     use borsh::{BorshDeserialize, BorshSerialize};
     use hyli_crypto::BlstCrypto;
-    use tokio::net::TcpListener;
-
-    use crate::clock::TimestampMsClock;
-    use crate::tcp::{p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent};
 
     use super::P2PTcpEvent;
 
     pub async fn find_available_port() -> u16 {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        addr.port()
+        crate::test_utils::find_available_port_sync()
     }
     // Simple message type for testing
     #[derive(

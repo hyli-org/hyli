@@ -9,6 +9,7 @@ mod node;
 mod transaction;
 
 pub mod utils;
+pub mod verifier_worker;
 pub mod verifiers;
 
 #[cfg(feature = "full")]

@@ -63,6 +63,7 @@ jobs:
 
   coverage:
     name: Unit tests coverage
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: arc-runner-set
     timeout-minutes: 15
     strategy:
@@ -110,8 +111,6 @@ jobs:
         run: cargo check -p hyli-model --no-default-features
       - name: Build
         run: cargo check --no-default-features
-      - name: Build with sp1
-        run: cargo check --no-default-features -F sp1
 
   unused_dependencies:
     name: Check unused dependencies

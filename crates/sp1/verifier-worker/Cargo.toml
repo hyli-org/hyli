@@ -1,0 +1,25 @@
+[package]
+name = "hyli-sp1-verifier-worker"
+description = "External SP1 verifier worker for Hyli"
+license-file = { workspace = true }
+version = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+rust-version = { workspace = true }
+
+[[bin]]
+name = "hyli-sp1-verifier"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+borsh = { workspace = true }
+hyli-model = { workspace = true, features = ["full"] }
+hyli-verifier-worker-core = { path = "../../verifier-worker" }
+sp1-sdk = { workspace = true, features = ["network"] }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
+bincode = { workspace = true }
+serde_json = { workspace = true }
+once_cell = { workspace = true }

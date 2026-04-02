@@ -32,6 +32,7 @@ pub mod shared_storage;
 pub mod single_node_consensus;
 pub mod tcp_server;
 pub mod utils;
+pub mod verifier_workers;
 
 #[cfg(test)]
 pub mod tests;

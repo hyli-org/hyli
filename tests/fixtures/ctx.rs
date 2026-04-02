@@ -11,10 +11,7 @@ use api::APIContract;
 use assertables::assert_ok;
 use client_sdk::{rest_client::NodeApiClient, transaction_builder::ProvableBlobTx};
 use hyli_model::api::APINodeContract;
-use testcontainers_modules::{
-    postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
-};
+use hyli_test_containers::{postgres::Postgres, runners::AsyncRunner, ContainerAsync, ImageExt};
 use tracing::info;
 
 use hyli::{

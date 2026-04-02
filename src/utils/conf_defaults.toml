@@ -120,3 +120,44 @@ default_proof_suffix = "default"
 gcs_bucket = ""
 gcs_prefix = "local"
 save_data_proposals = false
+
+[verifier_workers]
+enabled = true
+default_request_timeout_ms = 30000
+default_restart_backoff_ms = 1000
+
+[verifier_workers.backends.jolt]
+enabled = false
+command = "hyli-jolt-verifier"
+args = []
+verifiers = ["jolt-0.1"]
+startup_timeout_ms = 5000
+request_timeout_ms = 30000
+auto_restart = true
+
+[verifier_workers.backends.sp1]
+enabled = false
+command = "hyli-sp1-verifier"
+args = []
+verifiers = ["sp1-4"]
+startup_timeout_ms = 5000
+request_timeout_ms = 30000
+auto_restart = true
+
+[verifier_workers.backends.risc0]
+enabled = false
+command = "hyli-risc0-verifier"
+args = []
+verifiers = ["risc0-3"]
+startup_timeout_ms = 5000
+request_timeout_ms = 30000
+auto_restart = true
+
+[verifier_workers.backends.reth]
+enabled = false
+command = "hyli-reth-verifier"
+args = []
+verifiers = ["reth"]
+startup_timeout_ms = 5000
+request_timeout_ms = 30000
+auto_restart = true

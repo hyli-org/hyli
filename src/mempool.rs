@@ -10,6 +10,7 @@ use crate::{
     },
     shared_storage::DataProposalDurability,
     utils::{conf::SharedConf, serialize::BorshableIndexMap},
+    verifier_workers::ProofVerifierService,
 };
 use anyhow::{bail, Context, Result};
 use api::RestApiMessage;
@@ -135,6 +136,7 @@ pub struct Mempool {
     metrics: MempoolMetrics,
     lanes: LanesStorage,
     durability: DataProposalDurability,
+    proof_verifiers: Arc<ProofVerifierService>,
     inner: MempoolStore,
 }
 

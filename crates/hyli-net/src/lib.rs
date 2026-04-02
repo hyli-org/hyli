@@ -12,3 +12,6 @@ pub use turmoil;
 // BusMessage implementations for use with hyli-bus
 #[cfg(feature = "bus")]
 mod bus_impls;
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;

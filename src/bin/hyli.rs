@@ -26,6 +26,18 @@ pub struct Args {
 
     #[clap(long, action)]
     pub pg: bool,
+
+    #[clap(long, action)]
+    pub jolt: bool,
+
+    #[clap(long, action)]
+    pub sp1: bool,
+
+    #[clap(long, action)]
+    pub risc0: bool,
+
+    #[clap(long, action)]
+    pub reth: bool,
 }
 
 #[cfg(feature = "dhat")]
@@ -111,9 +123,36 @@ async fn inner_main() -> Result<()> {
         None
     };
 
-    #[cfg(feature = "sp1")]
-    {
-        hyli_verifiers::sp1_4::init();
+    if args.jolt {
+        if let Some(backend) = config.verifier_workers.backends.get_mut("jolt") {
+            backend.enabled = true;
+        } else {
+            anyhow::bail!("Jolt verifier worker backend not found in config");
+        }
+    }
+
+    if args.sp1 {
+        if let Some(backend) = config.verifier_workers.backends.get_mut("sp1") {
+            backend.enabled = true;
+        } else {
+            anyhow::bail!("SP1 verifier worker backend not found in config");
+        }
+    }
+
+    if args.risc0 {
+        if let Some(backend) = config.verifier_workers.backends.get_mut("risc0") {
+            backend.enabled = true;
+        } else {
+            anyhow::bail!("Risc0 verifier worker backend not found in config");
+        }
+    }
+
+    if args.reth {
+        if let Some(backend) = config.verifier_workers.backends.get_mut("reth") {
+            backend.enabled = true;
+        } else {
+            anyhow::bail!("Reth verifier worker backend not found in config");
+        }
     }
 
     log_error!(

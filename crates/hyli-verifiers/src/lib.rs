@@ -5,14 +5,9 @@ use anyhow::{bail, Context, Error};
 use hyli_model::{HyliOutput, ProgramId, ProofData, Verifier};
 use rand::Rng;
 
-#[cfg(feature = "sp1")]
-use sp1_sdk::{ProverClient, SP1ProofWithPublicValues, SP1VerifyingKey};
 use tracing::debug;
 
 pub mod noir_utils;
-
-#[cfg(feature = "reth")]
-pub mod reth;
 
 pub fn verify(
     verifier: &Verifier,
@@ -22,13 +17,7 @@ pub fn verify(
     match verifier.0.as_str() {
         #[cfg(feature = "cairo-m")]
         hyli_model::verifiers::CAIRO_M => cairo_m::verify(proof, program_id),
-        #[cfg(feature = "risc0")]
-        hyli_model::verifiers::RISC0_3 => risc0_1::verify(proof, program_id),
         hyli_model::verifiers::NOIR => noir::verify(proof, program_id),
-        #[cfg(feature = "sp1")]
-        hyli_model::verifiers::SP1_4 => sp1_4::verify(proof, program_id),
-        #[cfg(feature = "reth")]
-        hyli_model::verifiers::RETH => reth::verify(proof, program_id),
         _ => Err(anyhow::anyhow!("{} verifier not implemented yet", verifier)),
     }
 }
@@ -60,74 +49,6 @@ pub mod cairo_m {
         verify_cairo_m::<Blake2sMerkleChannel>(hyli_output_cairo_m.proof, None)?;
 
         Ok(vec![hyli_output_cairo_m.hyli_output])
-    }
-}
-
-#[cfg(feature = "risc0")]
-pub mod risc0_1 {
-    use super::*;
-
-    pub type Risc0ProgramId = [u8; 32];
-    pub type Risc0Journal = Vec<u8>;
-
-    pub fn verify(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<HyliOutput>, Error> {
-        let journal = risc0_proof_verifier(&proof.0, &program_id.0)?;
-        // First try to decode it as a single HyliOutput
-        Ok(
-            match std::panic::catch_unwind(|| journal.decode::<Vec<HyliOutput>>()).unwrap_or(Err(
-                risc0_zkvm::serde::Error::Custom("Failed to decode single HyliOutput".into()),
-            )) {
-                Ok(ho) => ho,
-                Err(_) => {
-                    debug!("Failed to decode Vec<HyliOutput>, trying to decode as HyliOutput");
-                    let hyli_output = journal
-                        .decode::<HyliOutput>()
-                        .context("Failed to extract HyliOuput from Risc0's journal")?;
-
-                    vec![hyli_output]
-                }
-            },
-        )
-    }
-
-    pub fn verify_recursive(
-        proof: &ProofData,
-        program_id: &ProgramId,
-    ) -> Result<(Vec<ProgramId>, Vec<HyliOutput>), Error> {
-        let journal = risc0_proof_verifier(&proof.0, &program_id.0)?;
-        let mut output = journal
-            .decode::<Vec<(Risc0ProgramId, Risc0Journal)>>()
-            .context("Failed to extract HyliOuput from Risc0's journal")?;
-
-        // Doesn't actually work to just deserialize in one go.
-        output
-            .drain(..)
-            .map(|o| {
-                risc0_zkvm::serde::from_slice::<Vec<HyliOutput>, _>(&o.1)
-                    .map(|h| (ProgramId(o.0.to_vec()), h))
-            })
-            .collect::<Result<(Vec<_>, Vec<_>), _>>()
-            .map(|(ids, outputs)| (ids, outputs.into_iter().flatten().collect()))
-            .context("Failed to decode HyliOutput")
-    }
-
-    pub fn risc0_proof_verifier(
-        encoded_receipt: &[u8],
-        image_id: &[u8],
-    ) -> Result<risc0_zkvm::Journal, Error> {
-        let receipt = borsh::from_slice::<risc0_zkvm::Receipt>(encoded_receipt)
-            .context("Error while decoding Risc0 proof's receipt")?;
-
-        let image_bytes: risc0_zkvm::sha::Digest =
-            image_id.try_into().context("Invalid Risc0 image ID")?;
-
-        receipt
-            .verify(image_bytes)
-            .context("Risc0 proof verification failed")?;
-
-        tracing::info!("✅ Risc0 proof verified.");
-
-        Ok(receipt.journal)
     }
 }
 
@@ -223,61 +144,6 @@ pub mod noir {
 
         Ok(vec![hyli_output])
         // temp_files is automatically dropped here, cleaning up all files
-    }
-}
-
-/// The following environment variables are used to configure the prover:
-/// - `SP1_PROVER`: The type of prover to use. Must be one of `mock`, `local`, `cuda`, or `network`.
-#[cfg(feature = "sp1")]
-pub mod sp1_4 {
-    use super::*;
-    use once_cell::sync::Lazy;
-
-    static SP1_CLIENT: Lazy<sp1_sdk::EnvProver> = Lazy::new(|| {
-        tracing::trace!("Setup sp1 prover client from env");
-        ProverClient::from_env()
-    });
-
-    pub fn init() {
-        tracing::info!("Initializing sp1 verifier");
-        let _client = &*SP1_CLIENT;
-    }
-
-    pub fn verify(
-        proof_bin: &ProofData,
-        verification_key: &ProgramId,
-    ) -> Result<Vec<HyliOutput>, Error> {
-        let client = &*SP1_CLIENT;
-
-        let proof: SP1ProofWithPublicValues =
-            bincode::deserialize(&proof_bin.0).context("Error while decoding SP1 proof.")?;
-
-        // Deserialize verification key from JSON
-        let vk: SP1VerifyingKey =
-            serde_json::from_slice(&verification_key.0).context("Invalid SP1 image ID")?;
-
-        // Verify the proof.
-        tracing::trace!("Verifying SP1 proof");
-        client
-            .verify(&proof, &vk)
-            .context("SP1 proof verification failed")?;
-
-        tracing::trace!("Extract HyliOutput");
-        let hyli_outputs =
-            match borsh::from_slice::<Vec<HyliOutput>>(proof.public_values.as_slice()) {
-                Ok(outputs) => outputs,
-                Err(_) => {
-                    debug!("Failed to decode Vec<HyliOutput>, trying to decode as HyliOutput");
-                    vec![
-                        borsh::from_slice::<HyliOutput>(proof.public_values.as_slice())
-                            .context("Failed to extract HyliOuput from SP1 proof")?,
-                    ]
-                }
-            };
-
-        tracing::info!("✅ SP1 proof verified.",);
-
-        Ok(hyli_outputs)
     }
 }
 

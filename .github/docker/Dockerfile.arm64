@@ -20,7 +20,10 @@ COPY Cargo.toml Cargo.lock ./
 COPY .cargo/config.toml .cargo/config.toml
 COPY src ./src
 COPY crates ./crates
-RUN cargo build --release -F sp1 -F risc0 -F vendored;
+RUN cargo build --release -F risc0 -F rate-proxy -F vendored
+# TODO: fix compilation on arm
+# RUN cargo build --release -p hyli-jolt-verifier-worker
+# RUN cargo build --release -p hyli-sp1-verifier-worker
 
 # RUNNER
 FROM --platform=linux/arm64 ${BASE_IMAGE} AS runner
@@ -33,6 +36,8 @@ COPY --from=builder /usr/src/hyli/target/aarch64-unknown-linux-gnu/release/hyli-
 COPY --from=builder /usr/src/hyli/target/aarch64-unknown-linux-gnu/release/gcs_uploader       ./
 COPY --from=builder /usr/src/hyli/target/aarch64-unknown-linux-gnu/release/smt_auto_prover    ./
 COPY --from=builder /usr/src/hyli/target/aarch64-unknown-linux-gnu/release/health_check       ./
+# COPY --from=builder /usr/src/hyli/target/aarch64-unknown-linux-gnu/release/hyli-jolt-verifier ./
+# COPY --from=builder /usr/src/hyli/target/aarch64-unknown-linux-gnu/release/hyli-sp1-verifier  ./
 
 VOLUME /hyli/data
 

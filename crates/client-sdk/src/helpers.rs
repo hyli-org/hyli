@@ -199,6 +199,59 @@ pub mod risc0 {
     }
 }
 
+#[cfg(feature = "jolt")]
+pub mod jolt {
+    pub use hyli_jolt_prover::{
+        verifier_preprocessing_to_program_id, BorshMemoryConfig, BorshableJoltProverPreprocessing,
+        JoltProver, JoltRegistryEntry,
+    };
+
+    use super::*;
+
+    impl ClientSdkProver<Vec<Calldata>> for JoltProver {
+        fn prove(
+            &self,
+            commitment_metadata: Vec<u8>,
+            calldatas: Vec<Calldata>,
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>> {
+            Box::pin(self.prove(commitment_metadata, calldatas))
+        }
+
+        fn info(&self) -> ProverInfo {
+            ProverInfo {
+                name: "jolt".to_string(),
+                zkvm: "jolt".to_string(),
+                version: "0.1".to_string(),
+            }
+        }
+
+        fn verifier(&self) -> Verifier {
+            hyli_model::verifiers::JOLT_0_1.into()
+        }
+
+        fn program_id(&self) -> ProgramId {
+            self.program_id.clone()
+        }
+
+        async fn new_from_registry(
+            contract_name: &ContractName,
+            program_id: ProgramId,
+        ) -> Result<Self>
+        where
+            Self: Sized,
+        {
+            let binding = hex::encode(program_id.0.clone());
+            let binary = hyli_registry::download_elf(&contract_name.0, &binding)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to get Jolt ELF: {}", e))?;
+
+            let entry = borsh::from_slice(&binary).expect("Failed to deserialize Jolt ELF");
+
+            Ok(JoltProver::new(entry, program_id))
+        }
+    }
+}
+
 #[cfg(feature = "sp1")]
 pub mod sp1 {
     use sdk::ProofMetadata;

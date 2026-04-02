@@ -1,0 +1,18 @@
+[package]
+name = "hyli-jolt-prover"
+description = "Jolt prover for Hyli"
+license-file = { workspace = true }
+version = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+rust-version = { workspace = true }
+
+[dependencies]
+hyli-jolt-model = { workspace = true }
+hyli-model = { workspace = true, features = ["full"] }
+
+anyhow = { workspace = true }
+jolt-sdk = { workspace = true, features = ["host"] }
+sha3 = { workspace = true }
+tempfile = { workspace = true }
