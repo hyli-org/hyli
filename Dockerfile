@@ -33,6 +33,7 @@ COPY --from=builder /usr/src/hyli/target/release/rate_limiter_proxy        ./
 COPY --from=builder /usr/src/hyli/target/release/hyli-jolt-verifier        ./
 COPY --from=builder /usr/src/hyli/target/release/hyli-risc0-verifier       ./
 COPY --from=builder /usr/src/hyli/target/release/hyli-sp1-verifier         ./
+COPY --from=builder /usr/src/hyli/target/release/hyli-reth-verifier        ./
 
 VOLUME /hyli/data
 
