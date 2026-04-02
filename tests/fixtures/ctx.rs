@@ -171,6 +171,15 @@ impl E2ECtx {
         while indexer_client.get_last_block().await.is_err() {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+        // Wait for the contract state indexer (CSI) to catch up with the genesis block,
+        // so that fetch_current_state calls in tests don't immediately fail.
+        while indexer_client
+            .fetch_current_state::<serde_json::Value>(&"hydentity".into())
+            .await
+            .is_err()
+        {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
         while client.get_node_info().await.is_err() {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }

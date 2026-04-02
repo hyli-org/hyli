@@ -11,6 +11,7 @@ contract_states!(
         hydentity: Hydentity,
     }
 );
+#[cfg_attr(not(feature = "risc0"), ignore)]
 #[test_log::test(tokio::test)]
 async fn test_recursion() {
     std::env::set_var("RISC0_DEV_MODE", "1");
