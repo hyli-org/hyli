@@ -6,7 +6,7 @@ use client_sdk::{
 use sdk::{
     api::{APIFees, APIFeesBalance, APIStaking},
     utils::as_hyli_output,
-    Blob, Calldata, ContractName, StakingAction, StateCommitment, ValidatorPublicKey, ZkContract,
+    Calldata, ContractName, StakingAction, StateCommitment, ValidatorPublicKey, ZkContract,
 };
 
 use crate::{
@@ -21,7 +21,9 @@ pub mod metadata {
 use metadata::*;
 
 impl TxExecutorHandler for Staking {
-    fn build_commitment_metadata(&self, _blob: &Blob) -> Result<Vec<u8>> {
+    type Contract = Staking;
+
+    fn build_commitment_metadata(&self, _calldata: &Calldata) -> Result<Vec<u8>> {
         borsh::to_vec(self).map_err(Into::into)
     }
     fn handle(&mut self, calldata: &Calldata) -> Result<sdk::HyliOutput> {
@@ -53,7 +55,10 @@ impl Staking {
         contract_name: ContractName,
         builder: &mut TxExecutorBuilder<S>,
     ) {
-        builder.init_with(contract_name, Risc0Prover::new(STAKING_ELF, PROGRAM_ID));
+        builder.init_with(
+            contract_name,
+            Risc0Prover::new(STAKING_ELF.to_vec(), PROGRAM_ID),
+        );
     }
 }
 
@@ -81,7 +86,7 @@ impl From<Fees> for APIFees {
                         val,
                         APIFeesBalance {
                             balance: b.balance,
-                            cumul_size: b.paid_cumul_size,
+                            cumul_sizes: b.paid_cumul_sizes,
                         },
                     )
                 })
@@ -115,7 +120,7 @@ impl From<APIFees> for Fees {
                         val,
                         ValidatorFeeState {
                             balance: b.balance,
-                            paid_cumul_size: b.cumul_size,
+                            paid_cumul_sizes: b.cumul_sizes,
                         },
                     )
                 })

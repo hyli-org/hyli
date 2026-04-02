@@ -4,8 +4,8 @@ use crate::{
     bus::SharedMessageBus,
     explorer::Explorer,
     model::{
-        Blob, BlobData, BlobProofOutput, ProofData, SignedBlock, Transaction, TransactionData,
-        VerifiedProofTransaction,
+        Blob, BlobData, BlobProofOutput, DataProposal, LaneId, ProofData, SignedBlock, Transaction,
+        TransactionData, ValidatorPublicKey, VerifiedProofTransaction,
     },
     utils::conf::IndexerConf,
 };
@@ -15,16 +15,14 @@ use client_sdk::transaction_builder::ProvableBlobTx;
 use hydentity::{client::tx_executor_handler::register_identity, HydentityAction};
 use hyli_contract_sdk::{BlobIndex, HyliOutput, Identity, ProgramId, StateCommitment, TxHash};
 use hyli_model::api::{
-    APIBlob, APIBlock, APIContract, APITransaction, APITransactionEvents, TransactionStatusDb,
+    APIBlob, APIBlock, APIContract, APIContractHistory, APITransaction, APITransactionEvents,
+    TransactionStatusDb,
 };
 use hyli_modules::node_state::test::{craft_signed_block, craft_signed_block_with_parent_dp_hash};
+use hyli_test_containers::{postgres::Postgres, runners::AsyncRunner, ContainerAsync, ImageExt};
 use serde_json::json;
-use sqlx::postgres::PgPoolOptions;
-use std::future::IntoFuture;
-use testcontainers_modules::{
-    postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
-};
+use sqlx::postgres::{PgListener, PgPoolOptions};
+use std::{future::IntoFuture, time::Duration};
 use utils::TimestampMs;
 
 use super::*;
@@ -41,6 +39,7 @@ async fn new_indexer(pool: PgPool) -> (Indexer, Explorer) {
         indexer: IndexerConf {
             query_buffer_size: 1,
             persist_proofs: false,
+            index_tx_events: true,
         },
         ..Conf::default()
     };
@@ -48,8 +47,12 @@ async fn new_indexer(pool: PgPool) -> (Indexer, Explorer) {
         Indexer {
             bus: IndexerBusClient::new_from_bus(bus.new_handle()).await,
             db: pool.clone(),
-            node_state: NodeState::create("indexer".to_string(), "indexer"),
-            handler_store: IndexerHandlerStore::default(),
+            node_state: NodeState::create("indexer"),
+            handler_store: IndexerHandlerStore {
+                index_tx_events: conf.indexer.index_tx_events,
+                ..IndexerHandlerStore::default()
+            },
+            metrics: IndexerMetrics::global(),
             conf,
         },
         Explorer::new(bus, pool).await,
@@ -274,13 +277,13 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
 
     // Handling a block containing txs
 
-    let parent_data_proposal = DataProposal::new(None, txs);
+    let lane_id = LaneId::new(ValidatorPublicKey("ttt".into()));
+    let parent_data_proposal = DataProposal::new_root(lane_id.clone(), txs);
     let mut signed_block = SignedBlock::default();
     signed_block.consensus_proposal.slot = 1;
-    signed_block.data_proposals.push((
-        LaneId(ValidatorPublicKey("ttt".into())),
-        vec![parent_data_proposal.clone()],
-    ));
+    signed_block
+        .data_proposals
+        .push((lane_id, vec![parent_data_proposal.clone()]));
 
     indexer
         .handle_signed_block(signed_block)
@@ -332,7 +335,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     indexer
         .handle_mempool_status_event(MempoolStatusEvent::WaitingDissemination {
             parent_data_proposal_hash: parent_data_proposal.hashed(),
-            tx: register_tx_1_wd.clone(),
+            txs: vec![register_tx_1_wd.clone()],
         })
         .await
         .expect("MempoolStatusEvent");
@@ -349,7 +352,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     indexer
         .handle_mempool_status_event(MempoolStatusEvent::WaitingDissemination {
             parent_data_proposal_hash: parent_data_proposal.hashed(),
-            tx: register_tx_2_wd.clone(),
+            txs: vec![register_tx_2_wd.clone()],
         })
         .await
         .expect("MempoolStatusEvent");
@@ -366,7 +369,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     let parent_data_proposal_hash = parent_data_proposal.hashed();
 
     let data_proposal = DataProposal::new(
-        Some(parent_data_proposal_hash.clone()),
+        parent_data_proposal_hash.clone(),
         vec![register_tx_1_wd.clone(), register_tx_2_wd.clone()],
     );
 
@@ -382,7 +385,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     indexer
         .handle_mempool_status_event(MempoolStatusEvent::WaitingDissemination {
             parent_data_proposal_hash: data_proposal.hashed(),
-            tx: blob_transaction_wd.clone(),
+            txs: vec![blob_transaction_wd.clone()],
         })
         .await
         .expect("MempoolStatusEvent");
@@ -427,7 +430,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
 
     // We skip blob_transaction_wd
     let data_proposal_2 = DataProposal::new(
-        Some(data_proposal.hashed()),
+        data_proposal.hashed(),
         vec![
             blob_transaction_wd.clone(),
             blob_transaction_wd.clone(),
@@ -461,7 +464,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     signed_block.consensus_proposal.timestamp = TimestampMs(12345);
     signed_block.consensus_proposal.slot = 2;
     signed_block.data_proposals.push((
-        LaneId(ValidatorPublicKey("ttt".into())),
+        LaneId::new(ValidatorPublicKey("ttt".into())),
         vec![data_proposal, data_proposal_2],
     ));
     let block_2_hash = signed_block.hashed();
@@ -638,6 +641,71 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     Ok(())
 }
 
+#[test_log::test(tokio::test)]
+async fn test_contract_notifications_sent() -> Result<()> {
+    let container = Postgres::default()
+        .with_tag("17-alpine")
+        .with_cmd(["postgres", "-c", "log_statement=all"])
+        .start()
+        .await
+        .unwrap();
+    let db_url = format!(
+        "postgresql://postgres:postgres@localhost:{}/postgres",
+        container.get_host_port_ipv4(5432).await.unwrap()
+    );
+    let db = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&db_url)
+        .await
+        .unwrap();
+    MIGRATOR.run(&db).await.unwrap();
+
+    let contract_name = ContractName::new("notify_contract");
+
+    let mut listener = PgListener::connect(&db_url).await.unwrap();
+    listener.listen(&contract_name.0).await.unwrap();
+
+    let (mut indexer, _) = new_indexer(db).await;
+
+    let register_tx = new_register_tx(contract_name.clone(), StateCommitment(vec![])).into();
+    let blob_transaction = new_blob_tx(
+        Identity::new(format!("test@{}", contract_name)),
+        contract_name.clone(),
+        ContractName::new("other"),
+    );
+
+    let lane_id = LaneId::new(ValidatorPublicKey("ttt".into()));
+    let parent_data_proposal =
+        DataProposal::new_root(lane_id.clone(), vec![register_tx, blob_transaction]);
+    let mut signed_block = SignedBlock::default();
+    signed_block.consensus_proposal.slot = 1;
+    signed_block
+        .data_proposals
+        .push((lane_id, vec![parent_data_proposal]));
+    let expected_block = signed_block.clone();
+
+    indexer
+        .handle_signed_block(signed_block)
+        .await
+        .expect("Failed to handle block");
+    indexer
+        .dump_store_to_db()
+        .await
+        .expect("Failed to dump store to DB");
+
+    let notification = tokio::time::timeout(Duration::from_secs(5), listener.recv())
+        .await
+        .expect("Notification timed out")
+        .expect("Failed to receive notification");
+
+    let payload: BlockHeight =
+        serde_json::from_str(notification.payload()).expect("Invalid payload");
+    assert_eq!(notification.channel(), &contract_name.0);
+    assert_eq!(payload, expected_block.height());
+
+    Ok(())
+}
+
 pub fn make_register_hyli_wallet_identity_tx() -> BlobTransaction {
     let mut tx = ProvableBlobTx::new("hyli@wallet".into());
     register_identity(&mut tx, "wallet".into(), "password".into()).unwrap();
@@ -772,10 +840,10 @@ async fn scenario_contracts() -> Result<(
             delete_d.into(),
             delete_d_proof,
         ],
-        DataProposalHash("test".to_string()),
+        b"test".into(),
     );
     // Reconstruct A in a separate DP
-    let parent = Some(b5.data_proposals[0].1[0].hashed());
+    let parent = b5.data_proposals[0].1[0].hashed();
     b5.data_proposals[0].1.push(DataProposal::new(
         parent,
         vec![new_register_tx(ContractName::new("a"), StateCommitment(vec![])).into()],
@@ -884,40 +952,48 @@ async fn test_indexer_api_doubles() -> Result<()> {
         .execute(&db)
         .await
         .context("insert test data")?;
+    // Add a second blob for the same tx+contract to guard against duplicate tx rows
+    // in `/transactions/contract/{contract_name}`.
+    sqlx::query(
+        "INSERT INTO blobs (tx_hash, parent_dp_hash, blob_index, identity, contract_name, data)
+         VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind("a4".repeat(32))
+    .bind("b0".repeat(32))
+    .bind(1_i32)
+    .bind("identity_2")
+    .bind("contract_1")
+    .bind(br#"{"data":"blob_data_4_dup"}"#.as_slice())
+    .execute(&db)
+    .await
+    .context("insert duplicate contract blob for tx")?;
 
     let (_indexer, explorer) = new_indexer(db).await;
     let server = setup_test_server(&explorer).await?;
+    let tx_hash_2 = "a2".repeat(32);
+    let tx_hash_3 = "a3".repeat(32);
+    let dp_hash_b = DataProposalHash(hex::decode("b1".repeat(32)).expect("dp hash hex"));
+    let block_hash_2 = ConsensusProposalHash(hex::decode("02".repeat(32)).expect("block hash hex"));
+    let block_hash_3 = ConsensusProposalHash(hex::decode("03".repeat(32)).expect("block hash hex"));
 
     // Multiple txs with same hash -- all in different blocks
 
-    let transactions_response = server
-        .get("/transaction/hash/test_tx_hash_2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        .await;
+    let transactions_response = server.get(&format!("/transaction/hash/{tx_hash_2}")).await;
     transactions_response.assert_status_ok();
     let result = transactions_response.json::<APITransaction>();
-    assert_eq!(
-        result.parent_dp_hash.0,
-        "dp_hashbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()
-    );
+    assert_eq!(result.parent_dp_hash, dp_hash_b);
 
     // Multiple txs with same hash -- one not yet in a block, should return the pending one
 
-    let transactions_response = server
-        .get("/proof/hash/test_tx_hash_3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        .await;
+    let transactions_response = server.get(&format!("/proof/hash/{tx_hash_3}")).await;
     transactions_response.assert_status_ok();
     let result = transactions_response.json::<APITransaction>();
-    assert_eq!(
-        result.parent_dp_hash.0,
-        "dp_hashbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()
-    );
+    assert_eq!(result.parent_dp_hash, dp_hash_b);
     assert_eq!(result.block_hash, None);
 
     // Get blobs by tx hash
 
-    let transactions_response = server
-        .get("/blobs/hash/test_tx_hash_2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        .await;
+    let transactions_response = server.get(&format!("/blobs/hash/{tx_hash_2}")).await;
     transactions_response.assert_status_ok();
     let result = transactions_response.json::<Vec<APIBlob>>();
     assert!(result.len() == 1);
@@ -928,44 +1004,46 @@ async fn test_indexer_api_doubles() -> Result<()> {
 
     // Get blob by tx hash
 
-    let transactions_response = server
-        .get("/blob/hash/test_tx_hash_2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/index/0")
-        .await;
+    let transactions_response = server.get(&format!("/blob/hash/{tx_hash_2}/index/0")).await;
     transactions_response.assert_status_ok();
     let result = transactions_response.json::<APIBlob>();
     assert_eq!(result.data, "{\"data\": \"blob_data_2_bis\"}".as_bytes());
 
     // Get proof by tx hash
 
-    let transactions_response = server
-        .get("/proof/hash/test_tx_hash_3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        .await;
+    let transactions_response = server.get(&format!("/proof/hash/{tx_hash_3}")).await;
     transactions_response.assert_status_ok();
     let result = transactions_response.json::<APITransaction>();
-    assert_eq!(
-        result.parent_dp_hash.0,
-        "dp_hashbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()
-    );
+    assert_eq!(result.parent_dp_hash, dp_hash_b);
     assert_eq!(result.block_hash, None);
 
     // Get transaction state event, the latest one
 
     let transactions_response = server
-            .get("/transaction/hash/test_tx_hash_2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/events")
-            .await;
+        .get(&format!("/transaction/hash/{tx_hash_2}/events"))
+        .await;
     transactions_response.assert_status_ok();
     let result = transactions_response.json::<Vec<APITransactionEvents>>();
     assert_eq!(
         result,
-        vec![APITransactionEvents {
-            block_hash: ConsensusProposalHash(
-                "block3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()
-            ),
-            block_height: BlockHeight(3),
-            events: vec![serde_json::json!({
-                "name": "Success"
-            })]
-        }]
+        vec![
+            APITransactionEvents {
+                block_hash: block_hash_2,
+                block_height: BlockHeight(2),
+                events: vec![serde_json::json!({
+                    "index": 1,
+                    "name": "Sequenced",
+                })]
+            },
+            APITransactionEvents {
+                block_hash: block_hash_3,
+                block_height: BlockHeight(3),
+                events: vec![serde_json::json!({
+                    "index": 1,
+                    "name": "Success",
+                })]
+            }
+        ]
     );
 
     Ok(())
@@ -995,6 +1073,10 @@ async fn test_indexer_api() -> Result<()> {
 
     let (_indexer, mut explorer) = new_indexer(db).await;
     let server = setup_test_server(&explorer).await?;
+    let block_hash_1 = "01".repeat(32);
+    let tx_hash_0 = "a0".repeat(32);
+    let tx_hash_1 = "a1".repeat(32);
+    let tx_hash_2 = "a2".repeat(32);
 
     // Blocks
     // Get all blocks
@@ -1040,9 +1122,7 @@ async fn test_indexer_api() -> Result<()> {
     assert!(!transactions_response.text().is_empty());
 
     // Get block by hash
-    let transactions_response = server
-        .get("/block/hash/block1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        .await;
+    let transactions_response = server.get(&format!("/block/hash/{block_hash_1}")).await;
     transactions_response.assert_status_ok();
     assert!(!transactions_response.text().is_empty());
 
@@ -1060,7 +1140,24 @@ async fn test_indexer_api() -> Result<()> {
     // Get an existing transaction by name
     let transactions_response = server.get("/transactions/contract/contract_1").await;
     transactions_response.assert_status_ok();
-    assert!(!transactions_response.text().is_empty());
+    let contract_txs = transactions_response.json::<Vec<APITransaction>>();
+    let unique_contract_txs: std::collections::BTreeSet<_> = contract_txs
+        .iter()
+        .map(|t| format!("{}:{}", t.parent_dp_hash, t.tx_hash))
+        .collect();
+    assert_eq!(unique_contract_txs.len(), contract_txs.len());
+
+    // Same endpoint branch with start_block pagination should also stay deduplicated.
+    let transactions_response = server
+        .get("/transactions/contract/contract_1?start_block=2&nb_results=10")
+        .await;
+    transactions_response.assert_status_ok();
+    let contract_txs = transactions_response.json::<Vec<APITransaction>>();
+    let unique_contract_txs: std::collections::BTreeSet<_> = contract_txs
+        .iter()
+        .map(|t| format!("{}:{}", t.parent_dp_hash, t.tx_hash))
+        .collect();
+    assert_eq!(unique_contract_txs.len(), contract_txs.len());
 
     // Get an unknown transaction by name
     let transactions_response = server.get("/transactions/contract/unknown_contract").await;
@@ -1068,16 +1165,12 @@ async fn test_indexer_api() -> Result<()> {
     assert_eq!(transactions_response.text(), "[]");
 
     // Get an existing transaction by hash
-    let transactions_response = server
-        .get("/transaction/hash/test_tx_hash_1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        .await;
+    let transactions_response = server.get(&format!("/transaction/hash/{tx_hash_1}")).await;
     transactions_response.assert_status_ok();
     assert!(!transactions_response.text().is_empty());
 
     // Get an existing transaction, waiting for dissemination by hash
-    let transactions_response = server
-        .get("/transaction/hash/test_tx_hash_0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        .await;
+    let transactions_response = server.get(&format!("/transaction/hash/{tx_hash_0}")).await;
     transactions_response.assert_status_ok();
     assert!(!transactions_response.text().is_empty());
 
@@ -1094,30 +1187,24 @@ async fn test_indexer_api() -> Result<()> {
     assert!(!transactions_response.text().is_empty());
 
     // Get blobs by tx_hash
-    let transactions_response = server
-        .get("/blobs/hash/test_tx_hash_2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        .await;
+    let transactions_response = server.get(&format!("/blobs/hash/{tx_hash_2}")).await;
     transactions_response.assert_status_ok();
     assert!(!transactions_response.text().is_empty());
 
     // Get unknown blobs by tx_hash
-    let transactions_response = server
-        .get("/blobs/hash/test_tx_hash_1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        .await;
+    let transactions_response = server.get(&format!("/blobs/hash/{tx_hash_1}")).await;
     transactions_response.assert_status_ok();
     assert_eq!(transactions_response.text(), "[]");
 
     // Get blob by tx_hash and index
-    let transactions_response = server
-        .get("/blob/hash/test_tx_hash_2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/index/0")
-        .await;
+    let transactions_response = server.get(&format!("/blob/hash/{tx_hash_2}/index/0")).await;
     transactions_response.assert_status_ok();
     assert!(!transactions_response.text().is_empty());
 
     // Get blob by tx_hash and unknown index
     let transactions_response = server
-            .get("/blob/hash/test_tx_hash_2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/index/1000")
-            .await;
+        .get(&format!("/blob/hash/{tx_hash_2}/index/1000"))
+        .await;
     transactions_response.assert_status_not_found();
 
     // Contracts
@@ -1142,6 +1229,213 @@ async fn test_indexer_api() -> Result<()> {
         let (contract_name, _) = tx;
         assert_eq!(contract_name, ContractName::new("contract_1"));
     }
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_data_proposal_created_does_not_downgrade_success() -> Result<()> {
+    let container = Postgres::default()
+        .with_tag("17-alpine")
+        .with_cmd(["postgres", "-c", "log_statement=all"])
+        .start()
+        .await
+        .unwrap();
+    let db = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&format!(
+            "postgresql://postgres:postgres@localhost:{}/postgres",
+            container.get_host_port_ipv4(5432).await.unwrap()
+        ))
+        .await
+        .unwrap();
+    MIGRATOR.run(&db).await.unwrap();
+
+    let (mut indexer, explorer) = new_indexer(db.clone()).await;
+    let server = setup_test_server(&explorer).await?;
+
+    let contract_name = ContractName::new("monotonic");
+    let register_tx = new_register_tx(contract_name, StateCommitment(vec![1, 2, 3]));
+    let transaction = Transaction {
+        version: 1,
+        transaction_data: TransactionData::Blob(register_tx.clone()),
+    };
+    let parent_dp = DataProposal::new_root(LaneId::default(), vec![transaction.clone()]);
+    let parent_dp_hash = parent_dp.hashed();
+    let tx_metadata = transaction.metadata(parent_dp_hash.clone());
+
+    sqlx::query(
+        "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity)
+         VALUES ($1, $2, $3, $4, $5, NULL, NULL, NULL, $6, $7)",
+    )
+    .bind(parent_dp_hash.to_string())
+    .bind(tx_metadata.id.1.to_string())
+    .bind(transaction.version as i32)
+    .bind(TransactionTypeDb::BlobTransaction)
+    .bind(TransactionStatusDb::Success)
+    .bind(0_i32)
+    .bind(Some(register_tx.identity.0.clone()))
+    .execute(&db)
+    .await
+    .unwrap();
+
+    assert_tx_status(
+        &server,
+        tx_metadata.id.1.clone(),
+        TransactionStatusDb::Success,
+    )
+    .await;
+
+    let dpc_event = MempoolStatusEvent::DataProposalCreated {
+        parent_data_proposal_hash: parent_dp_hash.clone(),
+        data_proposal_hash: DataProposal::new(parent_dp_hash.clone(), vec![transaction.clone()])
+            .hashed(),
+        txs_metadatas: vec![tx_metadata.clone()],
+    };
+    indexer
+        .handle_mempool_status_event(dpc_event)
+        .await
+        .expect("MempoolStatusEvent");
+    indexer.dump_store_to_db().await.expect("Dump to db");
+
+    assert_tx_status(&server, tx_metadata.id.1, TransactionStatusDb::Success).await;
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_contract_history_tracking() -> Result<()> {
+    let container = Postgres::default()
+        .with_tag("17-alpine")
+        .with_cmd(["postgres", "-c", "log_statement=all"])
+        .start()
+        .await
+        .unwrap();
+    let db = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&format!(
+            "postgresql://postgres:postgres@localhost:{}/postgres",
+            container.get_host_port_ipv4(5432).await.unwrap()
+        ))
+        .await
+        .unwrap();
+    MIGRATOR.run(&db).await.unwrap();
+
+    let (mut indexer, explorer) = new_indexer(db.clone()).await;
+    let server = setup_test_server(&explorer).await?;
+
+    let contract_name = ContractName::new("evolving");
+
+    // Block 1: Register contract with initial state
+    let initial_state = StateCommitment(vec![1, 2, 3]);
+    let register_tx = new_register_tx(contract_name.clone(), initial_state.clone());
+
+    let block1 = craft_signed_block(1, vec![register_tx.into()]);
+    indexer.force_handle_signed_block(block1).await.unwrap();
+    indexer.dump_store_to_db().await.unwrap();
+
+    // Verify contract_history has the registration entry
+    let rows = sqlx::query(
+        "SELECT block_height, tx_index, change_type::text[] as change_type, program_id, state_commitment FROM contract_history WHERE contract_name = $1 ORDER BY block_height, tx_index"
+    )
+    .bind(contract_name.0.clone())
+    .fetch_all(&db)
+    .await
+    .context("fetch contract_history")?;
+
+    assert_eq!(
+        rows.len(),
+        1,
+        "Should have 1 history entry after registration"
+    );
+    assert_eq!(rows[0].get::<i64, _>("block_height"), 1);
+    assert_eq!(rows[0].get::<i32, _>("tx_index"), 0);
+    assert_eq!(
+        rows[0].get::<Vec<String>, _>("change_type"),
+        vec!["registered".to_string()]
+    );
+    assert_eq!(rows[0].get::<Vec<u8>, _>("program_id"), vec![3, 2, 1]);
+    assert_eq!(
+        rows[0].get::<Vec<u8>, _>("state_commitment"),
+        initial_state.0
+    );
+
+    // Register a second contract to have more data
+    let contract_name_2 = ContractName::new("another");
+    let register_tx_2 = new_register_tx(contract_name_2.clone(), StateCommitment(vec![7, 8, 9]));
+    let block2 = craft_signed_block(2, vec![register_tx_2.into()]);
+    indexer.force_handle_signed_block(block2).await.unwrap();
+    indexer.dump_store_to_db().await.unwrap();
+
+    // Verify both contracts have history entries
+    let all_history = sqlx::query(
+        "SELECT contract_name, block_height, tx_index, change_type::text[] as change_type FROM contract_history ORDER BY block_height, tx_index"
+    )
+    .fetch_all(&db)
+    .await
+    .context("fetch all contract_history")?;
+
+    assert_eq!(all_history.len(), 2, "Should have 2 history entries total");
+    assert_eq!(
+        all_history[0].get::<String, _>("contract_name"),
+        contract_name.0
+    );
+    assert_eq!(
+        all_history[0].get::<Vec<String>, _>("change_type"),
+        vec!["registered".to_string()]
+    );
+    assert_eq!(
+        all_history[1].get::<String, _>("contract_name"),
+        contract_name_2.0
+    );
+    assert_eq!(
+        all_history[1].get::<Vec<String>, _>("change_type"),
+        vec!["registered".to_string()]
+    );
+
+    // Test the API endpoint
+    let history_response = server
+        .get(&format!("/contract/{}/history", contract_name.0))
+        .await;
+    history_response.assert_status_ok();
+    let history = history_response.json::<Vec<APIContractHistory>>();
+
+    assert_eq!(history.len(), 1, "API should return 1 history entry");
+    assert_eq!(history[0].contract_name, contract_name.0);
+    assert_eq!(history[0].block_height, 1);
+    assert_eq!(history[0].tx_index, 0);
+    assert_eq!(
+        history[0].change_type,
+        vec![hyli_model::api::ContractChangeType::Registered]
+    );
+
+    // Test API with change_type filter
+    let filtered_response = server
+        .get(&format!(
+            "/contract/{}/history?change_type=registered",
+            contract_name.0
+        ))
+        .await;
+    filtered_response.assert_status_ok();
+    let filtered_history = filtered_response.json::<Vec<APIContractHistory>>();
+
+    assert_eq!(filtered_history.len(), 1, "Should have 1 registered entry");
+    assert!(filtered_history
+        .iter()
+        .all(|h| h.change_type == vec![hyli_model::api::ContractChangeType::Registered]));
+
+    // Test API with block height range filter
+    let range_response = server
+        .get(&format!(
+            "/contract/{}/history?from_height=1&to_height=1",
+            contract_name.0
+        ))
+        .await;
+    range_response.assert_status_ok();
+    let range_history = range_response.json::<Vec<APIContractHistory>>();
+
+    assert_eq!(range_history.len(), 1, "Should have 1 entry in block 1");
+    assert!(range_history.iter().all(|h| h.block_height == 1));
 
     Ok(())
 }

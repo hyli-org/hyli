@@ -12,7 +12,7 @@ rust-version = { workspace = true }
 hyli-model = { workspace = true, features = ["full"] }
 
 blst = { workspace = true }
-rand = { version = "0.9" }
+rand = { workspace = true }
 anyhow = { workspace = true }
 borsh = { workspace = true }
 hex = { workspace = true }

@@ -14,17 +14,17 @@ use axum::{
     routing::get,
     Json,
 };
-use prometheus::{Encoder, Registry, TextEncoder};
 use sdk::{api::NodeInfo, *};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tower_http::catch_panic::CatchPanicLayer;
+use tower_http::trace::TraceLayer;
 use tracing::info;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-pub use client_sdk::contract_indexer::AppError;
 pub use client_sdk::rest_client as client;
+pub use client_sdk::AppError;
 
 module_bus_client! {
     struct RestBusClient {
@@ -35,7 +35,6 @@ pub struct RestApiRunContext {
     pub port: u16,
     pub info: NodeInfo,
     pub router: Router,
-    pub registry: Registry,
     pub max_body_size: usize,
     pub openapi: utoipa::openapi::OpenApi,
 }
@@ -52,19 +51,14 @@ impl RestApiRunContext {
             port,
             info,
             router,
-            registry: Registry::new(),
             max_body_size,
             openapi,
         }
-    }
-    pub fn with_registry(self, registry: Registry) -> Self {
-        Self { registry, ..self }
     }
 }
 
 pub struct RouterState {
     info: NodeInfo,
-    registry: Registry,
 }
 
 pub struct RestApi {
@@ -91,22 +85,30 @@ impl Module for RestApi {
     type Context = RestApiRunContext;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let app = ctx.router.merge(
+        #[cfg(feature = "instrumentation")]
+        let app = ctx.router.layer(
+            TraceLayer::new_for_http()
+                .make_span_with(make_span)
+                .on_response(close_span),
+        );
+
+        #[cfg(not(feature = "instrumentation"))]
+        let app = ctx.router;
+
+        let app = app.merge(
             Router::new()
                 .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ctx.openapi))
                 .route("/v1/info", get(get_info))
-                .route("/v1/metrics", get(get_metrics))
-                .with_state(RouterState {
-                    info: ctx.info,
-                    registry: ctx.registry,
-                }),
+                .with_state(RouterState { info: ctx.info }),
         );
         let app = app
             .layer(CatchPanicLayer::custom(handle_panic))
             .layer(DefaultBodyLimit::max(ctx.max_body_size)) // 10 MB
             .layer(tower_http::cors::CorsLayer::permissive())
+            .layer(TraceLayer::new_for_http())
             .layer(tower_http::decompression::RequestDecompressionLayer::new())
             .layer(axum::middleware::from_fn(request_logger));
+
         Ok(RestApi {
             port: ctx.port,
             app: Some(app),
@@ -132,7 +134,7 @@ pub async fn request_logger(req: Request<Body>, next: Next) -> impl IntoResponse
 
     // Debug log for metrics and health endpoints, info for others
     let path = uri.path();
-    if path.starts_with("/v1/metrics") || path == "/_health" || path.starts_with("/v1/info") {
+    if path == "/_health" || path.starts_with("/v1/info") {
         tracing::debug!(
             "[{}] {} - {} ({} μs)",
             method,
@@ -153,15 +155,43 @@ pub async fn request_logger(req: Request<Body>, next: Next) -> impl IntoResponse
     response
 }
 
-pub async fn get_info(State(state): State<RouterState>) -> Result<impl IntoResponse, AppError> {
-    Ok(Json(state.info))
+#[cfg(feature = "instrumentation")]
+fn make_span<B>(request: &Request<B>) -> tracing::Span {
+    use opentelemetry_http::HeaderExtractor;
+    use tracing::field;
+    use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+    let headers = request.headers();
+    let name = format!("{} {}", request.method(), request.uri());
+    let span = tracing::info_span!(
+        "http-request",
+        name,
+        ?headers,
+        http.method =  %request.method(),
+        http.uri =  %request.uri(),
+        http.status = field::Empty,
+        http.duration = field::Empty,
+    );
+
+    let parent_context = opentelemetry::global::get_text_map_propagator(|propagator| {
+        propagator.extract(&HeaderExtractor(request.headers()))
+    });
+    span.set_parent(parent_context);
+
+    span
 }
 
-pub async fn get_metrics(State(s): State<RouterState>) -> Result<impl IntoResponse, AppError> {
-    let mut buffer = Vec::new();
-    let encoder = TextEncoder::new();
-    encoder.encode(&s.registry.gather(), &mut buffer)?;
-    String::from_utf8(buffer).map_err(Into::into)
+#[cfg(feature = "instrumentation")]
+fn close_span<B>(response: &Response<B>, latency: std::time::Duration, span: &tracing::Span) {
+    span.record("http.status", tracing::field::display(response.status()));
+    span.record(
+        "http.duration",
+        tracing::field::display(latency.as_micros()),
+    );
+}
+
+pub async fn get_info(State(state): State<RouterState>) -> Result<impl IntoResponse, AppError> {
+    Ok(Json(state.info))
 }
 
 impl RestApi {
@@ -216,7 +246,6 @@ impl Clone for RouterState {
     fn clone(&self) -> Self {
         Self {
             info: self.info.clone(),
-            registry: self.registry.clone(),
         }
     }
 }

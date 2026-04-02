@@ -1,5 +1,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
+use hyli_bus::bus::metrics::BusMetrics;
+use hyli_modules::bus::BusEnvelope;
 use std::collections::HashSet;
 
 use crate::{
@@ -10,7 +12,6 @@ use crate::{
 };
 use hyli_model::{utils::TimestampMs, ConsensusProposal, ConsensusStakingAction};
 use staking::state::MIN_STAKE;
-use tokio::sync::broadcast;
 use tracing::{debug, error, trace};
 
 use super::Consensus;
@@ -32,6 +33,10 @@ pub struct LeaderState {
 }
 
 impl Consensus {
+    #[cfg_attr(
+        feature = "instrumentation",
+        tracing::instrument(skip(self, current_timestamp, may_delay), fields(slot = tracing::field::Empty, view = tracing::field::Empty))
+    )]
     pub(super) async fn start_round(
         &mut self,
         current_timestamp: TimestampMs,
@@ -132,9 +137,15 @@ impl Consensus {
                         debug!("⏳ Delaying slot start");
                         self.bft_round_state.leader.pending_ticket = Some(ticket);
                         let command_sender = hyli_modules::utils::static_type_map::Pick::<
-                            broadcast::Sender<ConsensusCommand>,
+                            hyli_modules::bus::BusSender<ConsensusCommand>,
                         >::get(&self.bus)
                         .clone();
+                        // Sort of a hack - we pickthe broadcast sender, so we lost the send metric increase
+                        // increment here so we don't drift over time.
+                        hyli_modules::utils::static_type_map::Pick::<BusMetrics>::get_mut(
+                            &mut self.bus,
+                        )
+                        .send::<ConsensusCommand, ConsensusBusClient>();
                         let max_delay = may_delay.unwrap_or_else(|| {
                             current_timestamp.clone() + self.config.consensus.slot_duration
                         });
@@ -144,8 +155,9 @@ impl Consensus {
                         );
                         tokio::spawn(async move {
                             tokio::time::sleep(sleep_for).await;
-                            let _ = command_sender
-                                .send(ConsensusCommand::StartNewSlot(Some(max_delay)));
+                            let _ = command_sender.send(BusEnvelope::from_message(
+                                ConsensusCommand::StartNewSlot(Some(max_delay)),
+                            ));
                         });
                         return Ok(());
                     }
@@ -184,6 +196,9 @@ impl Consensus {
                 new_validators_to_bond.len(),
                 CutDisplay(&cut)
             );
+            let span = tracing::Span::current();
+            span.record("slot", self.bft_round_state.slot as i64); // u64 is converted as string by
+            span.record("view", self.bft_round_state.view as i64); // otlp, so cast to i64 here
 
             let mut staking_actions: Vec<ConsensusStakingAction> = new_validators_to_bond
                 .into_iter()
@@ -192,6 +207,7 @@ impl Consensus {
 
             for tx in cut.iter() {
                 debug!("📦 Lane {} cumulated size: {}", tx.0, tx.2);
+                self.metrics.record_lane_bytes(&tx.0, tx.2);
                 staking_actions.push(ConsensusStakingAction::PayFeesForDaDi {
                     lane_id: tx.0.clone(),
                     cumul_size: tx.2,
@@ -220,6 +236,7 @@ impl Consensus {
             self.bft_round_state.view,
         );
         follower_state!(self).buffered_prepares.push(prepare);
+        self.record_prepare_cache_sizes();
 
         self.metrics.start_new_round(self.bft_round_state.slot);
 
@@ -243,6 +260,10 @@ impl Consensus {
         matches!(self.bft_round_state.state_tag, StateTag::Leader)
     }
 
+    #[cfg_attr(
+        feature = "instrumentation",
+        tracing::instrument(skip(self, prepare_vote))
+    )]
     pub(super) fn on_prepare_vote(&mut self, prepare_vote: PrepareVote) -> Result<()> {
         if !matches!(self.bft_round_state.state_tag, StateTag::Leader) {
             debug!(
@@ -271,6 +292,12 @@ impl Consensus {
         if prepare_vote.msg.0 != current_proposal.hashed() {
             bail!("PrepareVote has not received valid consensus proposal hash");
         }
+
+        debug!(
+            "📩 Slot {} votes: {}",
+            self.bft_round_state.slot,
+            self.store.bft_round_state.leader.prepare_votes.len()
+        );
 
         // Save vote message
         self.store
@@ -338,6 +365,10 @@ impl Consensus {
         Ok(())
     }
 
+    #[cfg_attr(
+        feature = "instrumentation",
+        tracing::instrument(skip(self, confirm_ack))
+    )]
     pub(super) fn on_confirm_ack(&mut self, confirm_ack: ConfirmAck) -> Result<()> {
         if !matches!(self.bft_round_state.state_tag, StateTag::Leader) {
             debug!(

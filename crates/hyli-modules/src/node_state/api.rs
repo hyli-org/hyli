@@ -5,7 +5,7 @@ use axum::{
     response::IntoResponse,
     Json, Router,
 };
-use client_sdk::contract_indexer::AppError;
+use client_sdk::AppError;
 use sdk::{api::APINodeContract, *};
 use tracing::error;
 use utoipa::OpenApi;
@@ -89,7 +89,10 @@ pub async fn get_contract(
             verifier: contract.verifier,
             timeout_window: match contract.timeout_window {
                 TimeoutWindow::NoTimeout => None,
-                TimeoutWindow::Timeout(window) => Some(window.0),
+                TimeoutWindow::Timeout {
+                    hard_timeout,
+                    soft_timeout,
+                } => Some((hard_timeout.0, soft_timeout.0)),
             },
         })),
         err => {
@@ -215,7 +218,7 @@ pub async fn get_unsettled_txs_count(
     get,
     path = "/unsettled_tx/{blob_tx_hash}",
     params(
-        ("blob_tx_hash" = String, Path, description = "Blob tx hash"),
+        ("blob_tx_hash" = TxHash, Path, description = "Blob tx hash"),
     ),
     tag = "Node State",
     responses(
@@ -223,12 +226,12 @@ pub async fn get_unsettled_txs_count(
     )
 )]
 pub async fn get_unsettled_tx(
-    Path(blob_tx_hash): Path<String>,
+    Path(blob_tx_hash): Path<TxHash>,
     State(mut state): State<RouterState>,
 ) -> Result<impl IntoResponse, AppError> {
     match state
         .bus
-        .shutdown_aware_request::<()>(QueryUnsettledTx(TxHash(blob_tx_hash)))
+        .shutdown_aware_request::<()>(QueryUnsettledTx(blob_tx_hash))
         .await
     {
         Ok(tx_context) => Ok(Json(tx_context)),
@@ -277,31 +280,31 @@ impl Clone for RouterState {
         Self {
             bus: RestBusClient::new(
                 Pick::<BusMetrics>::get(&self.bus).clone(),
-                Pick::<tokio::sync::broadcast::Sender<Query<ContractName, (BlockHeight, Contract)>>>::get(
+                Pick::<crate::bus::BusSender<Query<ContractName, (BlockHeight, Contract)>>>::get(
                     &self.bus,
                 )
                 .clone(),
                 Pick::<
-                    tokio::sync::broadcast::Sender<
+                    crate::bus::BusSender<
                         Query<QuerySettledHeight, BlockHeight>,
                     >,
                 >::get(&self.bus)
                 .clone(),
                 Pick::<
-                    tokio::sync::broadcast::Sender<Query<QueryUnsettledTxCount, u64>>,
+                    crate::bus::BusSender<Query<QueryUnsettledTxCount, u64>>,
                 >::get(&self.bus)
                 .clone(),
-                Pick::<tokio::sync::broadcast::Sender<Query<QueryBlockHeight, BlockHeight>>>::get(
+                Pick::<crate::bus::BusSender<Query<QueryBlockHeight, BlockHeight>>>::get(
                     &self.bus,
                 )
                 .clone(),
                 Pick::<
-                    tokio::sync::broadcast::Sender<
+                    crate::bus::BusSender<
                         Query<QueryUnsettledTx, UnsettledBlobTransaction>,
                     >,
                 >::get(&self.bus)
                 .clone(),
-                Pick::<tokio::sync::broadcast::Receiver<ShutdownModule>>::get(&self.bus).resubscribe(),
+                Pick::<crate::bus::BusReceiver<ShutdownModule>>::get(&self.bus).resubscribe(),
             ),
         }
     }

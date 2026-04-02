@@ -1,4 +1,4 @@
-use std::num::TryFromIntError;
+use std::{num::TryFromIntError, str::FromStr};
 
 use super::{BlockPagination, ExplorerApiState};
 use api::{
@@ -11,141 +11,28 @@ use axum::{
     Json,
 };
 use hyli_model::utils::TimestampMs;
+use serde::Deserialize;
 use sqlx::postgres::PgRow;
 use sqlx::types::chrono::NaiveDateTime;
 use sqlx::FromRow;
 use sqlx::Row;
-use sqlx::{prelude::Type, Postgres};
 
 use crate::model::*;
 use hyli_modules::log_error;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct DataProposalHashDb(pub DataProposalHash);
-
-impl From<DataProposalHash> for DataProposalHashDb {
-    fn from(dp_hash: DataProposalHash) -> Self {
-        DataProposalHashDb(dp_hash)
-    }
-}
-
-impl Type<Postgres> for DataProposalHashDb {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as Type<Postgres>>::type_info()
-    }
-}
-impl sqlx::Encode<'_, sqlx::Postgres> for DataProposalHashDb {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> std::result::Result<
-        sqlx::encode::IsNull,
-        std::boxed::Box<(dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static)>,
-    > {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0 .0, buf)
-    }
-}
-
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for DataProposalHashDb {
-    fn decode(
-        value: sqlx::postgres::PgValueRef<'r>,
-    ) -> std::result::Result<
-        DataProposalHashDb,
-        std::boxed::Box<(dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static)>,
-    > {
-        let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(DataProposalHashDb(DataProposalHash(inner)))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TxHashDb(pub TxHash);
-
-impl From<TxHash> for TxHashDb {
-    fn from(tx_hash: TxHash) -> Self {
-        TxHashDb(tx_hash)
-    }
-}
-
-impl Type<Postgres> for TxHashDb {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as Type<Postgres>>::type_info()
-    }
-}
-impl sqlx::Encode<'_, sqlx::Postgres> for TxHashDb {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> std::result::Result<
-        sqlx::encode::IsNull,
-        std::boxed::Box<(dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static)>,
-    > {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0 .0, buf)
-    }
-}
-
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for TxHashDb {
-    fn decode(
-        value: sqlx::postgres::PgValueRef<'r>,
-    ) -> std::result::Result<
-        TxHashDb,
-        std::boxed::Box<(dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static)>,
-    > {
-        let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(TxHashDb(TxHash(inner)))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct LaneIdDb(pub LaneId);
-
-impl From<LaneId> for LaneIdDb {
-    fn from(tx_hash: LaneId) -> Self {
-        LaneIdDb(tx_hash)
-    }
-}
-
-impl Type<Postgres> for LaneIdDb {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as Type<Postgres>>::type_info()
-    }
-}
-impl sqlx::Encode<'_, sqlx::Postgres> for LaneIdDb {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> std::result::Result<
-        sqlx::encode::IsNull,
-        std::boxed::Box<(dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static)>,
-    > {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&hex::encode(&self.0 .0 .0), buf)
-    }
-}
-
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for LaneIdDb {
-    fn decode(
-        value: sqlx::postgres::PgValueRef<'r>,
-    ) -> std::result::Result<
-        LaneIdDb,
-        std::boxed::Box<(dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static)>,
-    > {
-        let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(LaneIdDb(LaneId(ValidatorPublicKey(hex::decode(inner)?))))
-    }
-}
-
 #[derive(Debug)]
 pub struct TransactionDb {
     // Struct for the transactions table
-    pub tx_hash: TxHashDb,                         // Transaction hash
+    pub tx_hash: TxHash,                           // Transaction hash
     pub parent_dp_hash: DataProposalHash,          // Corresponds to the data proposal hash
     pub block_hash: Option<ConsensusProposalHash>, // Corresponds to the block hash
+    pub block_height: Option<BlockHeight>,         // Corresponds to the block height
     pub index: Option<u32>,                        // Index of the transaction within the block
     pub version: u32,                              // Transaction version
     pub transaction_type: TransactionTypeDb,       // Type of transaction
     pub transaction_status: TransactionStatusDb,   // Status of the transaction
     pub timestamp: Option<NaiveDateTime>,          // Timestamp of the transaction (block timestamp)
-    pub lane_id: Option<LaneIdDb>,                 // Lane ID of the transaction
+    pub lane_id: Option<LaneId>,                   // Lane ID of the transaction
     pub identity: Option<String>, // Identity of the transaction sender (null for proofs)
 }
 
@@ -153,8 +40,15 @@ impl<'r> FromRow<'r, PgRow> for TransactionDb {
     fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
         let tx_hash = row.try_get("tx_hash")?;
         let block_hash = row.try_get("block_hash")?;
-        let dp_hash_db: DataProposalHashDb = row.try_get("parent_dp_hash")?;
-        let parent_dp_hash = dp_hash_db.0;
+        let block_height: Option<i64> = row.try_get("block_height")?;
+        let block_height = block_height
+            .map(|h| {
+                h.try_into()
+                    .map(BlockHeight)
+                    .map_err(|e: TryFromIntError| sqlx::Error::Decode(e.into()))
+            })
+            .transpose()?;
+        let parent_dp_hash: DataProposalHash = row.try_get("parent_dp_hash")?;
         let index: Option<i32> = row.try_get("index")?;
         let version: i32 = row.try_get("version")?;
         let version: u32 = version
@@ -171,13 +65,14 @@ impl<'r> FromRow<'r, PgRow> for TransactionDb {
             ),
         };
         let timestamp: Option<NaiveDateTime> = row.try_get("timestamp").unwrap_or_default();
-        let lane_id: Option<LaneIdDb> = row.try_get("lane_id").unwrap_or_default();
+        let lane_id: Option<LaneId> = row.try_get("lane_id").unwrap_or_default();
         let identity: Option<String> = row.try_get("identity").unwrap_or_default();
 
         Ok(TransactionDb {
             tx_hash,
             parent_dp_hash,
             block_hash,
+            block_height,
             index,
             version,
             transaction_type,
@@ -195,15 +90,16 @@ impl From<TransactionDb> for APITransaction {
             .timestamp
             .map(|t| TimestampMs(t.and_utc().timestamp_millis() as u128));
         APITransaction {
-            tx_hash: val.tx_hash.0,
+            tx_hash: val.tx_hash,
             parent_dp_hash: val.parent_dp_hash,
             block_hash: val.block_hash,
+            block_height: val.block_height,
             index: val.index,
             version: val.version,
             transaction_type: val.transaction_type,
             transaction_status: val.transaction_status,
             timestamp,
-            lane_id: val.lane_id.map(|l| l.0),
+            lane_id: val.lane_id,
             identity: val.identity,
         }
     }
@@ -281,43 +177,146 @@ pub async fn get_transactions_by_contract(
     Query(pagination): Query<BlockPagination>,
     State(state): State<ExplorerApiState>,
 ) -> Result<Json<Vec<APITransaction>>, StatusCode> {
-    let transactions = log_error!(match pagination.start_block {
-        Some(start_block) => sqlx::query_as::<_, TransactionDb>(
-            r#"
-            SELECT t.* , bl.timestamp
-            FROM transactions t
-            JOIN blobs b ON t.tx_hash = b.tx_hash
-            LEFT JOIN blocks bl ON t.block_hash = bl.hash
-            WHERE b.contract_name = $1 AND bl.height <= $2 AND bl.height > $3 AND t.transaction_type = 'blob_transaction'
-            ORDER BY bl.height DESC, t.index DESC
-            LIMIT $4
-            "#,
-        )
-        .bind(contract_name)
-        .bind(start_block)
-        .bind(start_block - pagination.nb_results.unwrap_or(10)) // Fine if this goes negative
-        .bind(pagination.nb_results.unwrap_or(10)),
-        None => sqlx::query_as::<_, TransactionDb>(
-            r#"
+    let transactions = log_error!(
+        match pagination.start_block {
+            Some(start_block) => sqlx::query_as::<_, TransactionDb>(
+                r#"
+            WITH contract_txs AS (
+                SELECT tx_c.parent_dp_hash, tx_c.tx_hash, tx_c.block_height, tx_c.tx_index
+                FROM txs_contracts_sequenced tx_c
+                WHERE tx_c.contract_name = $1
+                  AND tx_c.block_height <= $2
+                  AND tx_c.block_height > $3
+                ORDER BY tx_c.block_height DESC, tx_c.tx_index DESC
+                LIMIT $4
+            )
             SELECT t.*, bl.timestamp
-            FROM transactions t
-            JOIN blobs b ON t.tx_hash = b.tx_hash AND t.parent_dp_hash = b.parent_dp_hash
+            FROM contract_txs ct
+            JOIN transactions t
+              ON t.parent_dp_hash = ct.parent_dp_hash
+             AND t.tx_hash = ct.tx_hash
             LEFT JOIN blocks bl ON t.block_hash = bl.hash
-            WHERE b.contract_name = $1 AND t.transaction_type = 'blob_transaction'
-            ORDER BY bl.height DESC, t.index DESC
-            LIMIT $2
+            WHERE t.transaction_type = 'blob_transaction'
+            ORDER BY ct.block_height DESC, ct.tx_index DESC
             "#,
-        )
-        .bind(contract_name)
-        .bind(pagination.nb_results.unwrap_or(10)),
-    }
-    .fetch_all(&state.db)
-    .await
-    .map(|db| db.into_iter().map(Into::<APITransaction>::into).collect()),
-    "Failed to fetch transactions by contract")
+            )
+            .bind(contract_name)
+            .bind(start_block)
+            .bind(start_block - pagination.nb_results.unwrap_or(10)) // Fine if this goes negative
+            .bind(pagination.nb_results.unwrap_or(10)),
+            None => sqlx::query_as::<_, TransactionDb>(
+                r#"
+            WITH contract_txs AS (
+                SELECT tx_c.parent_dp_hash, tx_c.tx_hash, tx_c.block_height, tx_c.tx_index
+                FROM txs_contracts_sequenced tx_c
+                WHERE tx_c.contract_name = $1
+                ORDER BY tx_c.block_height DESC, tx_c.tx_index DESC
+                LIMIT $2
+            )
+            SELECT t.*, bl.timestamp
+            FROM contract_txs ct
+            JOIN transactions t
+              ON t.parent_dp_hash = ct.parent_dp_hash
+             AND t.tx_hash = ct.tx_hash
+            LEFT JOIN blocks bl ON t.block_hash = bl.hash
+            WHERE t.transaction_type = 'blob_transaction'
+            ORDER BY ct.block_height DESC, ct.tx_index DESC
+            "#,
+            )
+            .bind(contract_name)
+            .bind(pagination.nb_results.unwrap_or(10)),
+        }
+        .fetch_all(&state.db)
+        .await
+        .map(|db| db.into_iter().map(Into::<APITransaction>::into).collect()),
+        "Failed to fetch transactions by contract"
+    )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(transactions))
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransactionStatusQuery {
+    pub status: Vec<TransactionStatusDb>,
+}
+
+impl<'de> Deserialize<'de> for TransactionStatusQuery {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::de::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawStatusQuery {
+            #[serde(default)]
+            status: String,
+        }
+
+        let raw = RawStatusQuery::deserialize(deserializer)?;
+        let status = raw
+            .status
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| TransactionStatusDb::from_str(s).map_err(serde::de::Error::custom))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(TransactionStatusQuery { status })
+    }
+}
+
+#[utoipa::path(
+    get,
+    tag = "Indexer",
+    params(
+        ("contract_name" = String, Path, description = "Contract name"),
+    ),
+    path = "/transactions/contract/{contract_name}/last_settled_tx_id",
+    responses(
+        (status = OK, body = TxId)
+    )
+)]
+#[axum::debug_handler]
+pub async fn get_last_settled_tx_by_contract(
+    Path(contract_name): Path<String>,
+    Query(status): Query<TransactionStatusQuery>,
+    State(state): State<ExplorerApiState>,
+) -> Result<Json<Option<TxId>>, StatusCode> {
+    let status = if status.status.is_empty() {
+        vec![
+            TransactionStatusDb::Success,
+            TransactionStatusDb::Failure,
+            TransactionStatusDb::TimedOut,
+        ]
+    } else {
+        status.status
+    };
+
+    let tx_id = log_error!(
+        sqlx::query_as::<_, TxId>(
+            "
+            SELECT
+                t.parent_dp_hash, t.tx_hash
+            FROM
+                txs_contracts_settled tx_c
+            JOIN transactions t
+                ON tx_c.parent_dp_hash = t.parent_dp_hash
+               AND tx_c.tx_hash = t.tx_hash
+            WHERE tx_c.contract_name = $1
+              AND t.transaction_type = 'blob_transaction'
+              AND t.transaction_status = ANY($2)
+            ORDER BY tx_c.settled_block_height DESC, tx_c.settled_index DESC
+            LIMIT 1
+            "
+        )
+        .bind(contract_name)
+        .bind(status)
+        .fetch_optional(&state.db)
+        .await,
+        "Failed to fetch last settled tx by contract"
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(tx_id))
 }
 
 #[utoipa::path(
@@ -360,7 +359,7 @@ pub async fn get_transactions_by_height(
     get,
     tag = "Indexer",
     params(
-        ("tx_hash" = String, Path, description = "Tx hash"),
+        ("tx_hash" = TxHash, Path, description = "Tx hash"),
     ),
     path = "/transaction/hash/{tx_hash}",
     responses(
@@ -368,23 +367,13 @@ pub async fn get_transactions_by_height(
     )
 )]
 pub async fn get_transaction_with_hash(
-    Path(tx_hash): Path<String>,
+    Path(tx_hash): Path<TxHash>,
     State(state): State<ExplorerApiState>,
 ) -> Result<Json<APITransaction>, StatusCode> {
     let transaction = log_error!(
         sqlx::query_as::<_, TransactionDb>(
             r#"
-SELECT
-    tx_hash,
-    version,
-    transaction_type,
-    transaction_status,
-    parent_dp_hash,
-    block_hash,
-    index,
-    b.timestamp,
-    lane_id,
-    identity
+SELECT t.*, b.timestamp
 FROM transactions t
 LEFT JOIN blocks b ON t.block_hash = b.hash
 WHERE t.tx_hash = $1 AND transaction_type='blob_transaction'
@@ -392,7 +381,7 @@ ORDER BY block_height DESC, index DESC
 LIMIT 1;
         "#,
         )
-        .bind(tx_hash)
+        .bind(tx_hash.to_string())
         .fetch_optional(&state.db)
         .await
         .map(|db| db.map(|test| { Into::<APITransaction>::into(test) })),
@@ -410,7 +399,7 @@ LIMIT 1;
     get,
     tag = "Indexer",
     params(
-        ("tx_hash" = String, Path, description = "Tx hash"),
+        ("tx_hash" = TxHash, Path, description = "Tx hash"),
     ),
     path = "/transaction/hash/{tx_hash}/events",
     responses(
@@ -418,45 +407,26 @@ LIMIT 1;
     )
 )]
 pub async fn get_transaction_events(
-    Path(tx_hash): Path<String>,
+    Path(tx_hash): Path<TxHash>,
     State(state): State<ExplorerApiState>,
 ) -> Result<Json<Vec<APITransactionEvents>>, StatusCode> {
     let rows = log_error!(
         sqlx::query(
             r#"
-with filtered as (
-    SELECT 
-        t.block_hash,
-        b.height,
-        t.tx_hash,
-        t.parent_dp_hash,
-        t.events,
-        t.index
-    FROM transaction_state_events t
-    LEFT JOIN blocks b 
-        ON t.block_hash = b.hash
-    WHERE 
-        t.tx_hash = $1
-        AND t.block_height = b.height
-),
-parsed as(
 SELECT
-    block_hash,
-    height,
-    parent_dp_hash,
-    tx_hash,
-    events
-FROM
-    (SELECT filtered.*, parent_dp_hash = FIRST_VALUE(parent_dp_hash) OVER (ORDER BY height DESC, index DESC) as first_res FROM filtered)
-WHERE first_res = TRUE
-ORDER BY 
-    height DESC,
-    index DESC
-)
-select block_hash, height, parent_dp_hash, tx_hash, jsonb_agg(events) as events from parsed group by 1,2,3,4;
+    t.block_hash,
+    t.block_height,
+    JSON_AGG(
+        JSONB_BUILD_OBJECT('index', t.index) || t.event
+        ORDER BY t.index
+    ) as events
+FROM transaction_state_events t
+WHERE t.tx_hash = $1
+GROUP BY t.block_hash, t.block_height
+ORDER BY t.block_height ASC;
 "#,
         )
-        .bind(tx_hash)
+        .bind(tx_hash.to_string())
         .fetch_all(&state.db)
         .await,
         "Failed to fetch transaction events"
@@ -467,7 +437,7 @@ select block_hash, height, parent_dp_hash, tx_hash, jsonb_agg(events) as events 
         .into_iter()
         .map(|row| {
             let block_hash = row.try_get("block_hash")?;
-            let block_height: i64 = row.try_get("height")?;
+            let block_height: i64 = row.try_get("block_height")?;
             let block_height = BlockHeight(block_height.try_into()?);
             let events: serde_json::Value = row.try_get("events")?;
             let events: Vec<serde_json::Value> = serde_json::from_value(events)?;
@@ -516,6 +486,7 @@ pub async fn get_blob_transactions_by_contract(
             t.tx_hash,
             t.parent_dp_hash,
             t.block_hash,
+            t.block_height,
             t.index,
             t.version,
             t.transaction_type,
@@ -528,6 +499,7 @@ pub async fn get_blob_transactions_by_contract(
             t.tx_hash,
             t.parent_dp_hash,
             t.block_hash,
+            t.block_height,
             t.index,
             t.version,
             t.transaction_type,
@@ -547,6 +519,9 @@ pub async fn get_blob_transactions_by_contract(
             let Some(block_hash) = api_tx.block_hash else {
                 return Err(sqlx::Error::RowNotFound);
             };
+            let Some(block_height) = api_tx.block_height else {
+                return Err(sqlx::Error::RowNotFound);
+            };
             let blobs: Vec<(String, Vec<u8>, Vec<serde_json::Value>)> = row.try_get("blobs")?;
             let blobs = blobs
                 .into_iter()
@@ -561,9 +536,10 @@ pub async fn get_blob_transactions_by_contract(
             };
 
             Ok(TransactionWithBlobs {
-                tx_hash: api_tx.tx_hash.0,
+                tx_hash: api_tx.tx_hash,
                 parent_dp_hash: api_tx.parent_dp_hash,
                 block_hash,
+                block_height,
                 index: api_tx.index.unwrap_or(0),
                 version: api_tx.version,
                 transaction_type: api_tx.transaction_type,
@@ -571,7 +547,7 @@ pub async fn get_blob_transactions_by_contract(
                 timestamp: api_tx
                     .timestamp
                     .map(|t| TimestampMs(t.and_utc().timestamp_millis() as u128)),
-                lane_id: api_tx.lane_id.map(|l| l.0),
+                lane_id: api_tx.lane_id,
                 identity,
                 blobs,
             })

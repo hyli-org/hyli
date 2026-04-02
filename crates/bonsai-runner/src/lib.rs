@@ -15,7 +15,7 @@ use boundless_market::{
     client::ClientBuilder,
     contracts::Offer,
     deployments::NamedChain,
-    storage::{storage_provider_from_env, StorageProvider},
+    storage::{StandardUploader, StorageUploader, StorageUploaderConfig, StorageUploaderType},
     Deployment, GuestEnvBuilder,
 };
 use risc0_zkvm::{compute_image_id, default_executor, sha::Digestible, Receipt};
@@ -33,6 +33,45 @@ pub fn as_input_data<T: BorshSerialize>(data: &T) -> Result<Vec<u8>> {
 pub struct ProofResult {
     pub receipt: Receipt,
     pub cycles: Option<u64>,
+}
+
+fn is_dev_mode() -> bool {
+    std::env::var("RISC0_DEV_MODE")
+        .ok()
+        .map(|value| value.to_lowercase())
+        .filter(|value| value == "1" || value == "true" || value == "yes")
+        .is_some()
+}
+
+fn parse_url_env(key: &str) -> Result<Option<Url>> {
+    let value = match std::env::var(key) {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+
+    Ok(Some(
+        Url::parse(&value).with_context(|| format!("invalid URL in {key}"))?,
+    ))
+}
+
+async fn storage_uploader_from_env() -> Result<StandardUploader> {
+    if is_dev_mode() {
+        return Ok(StandardUploader::from_config(&StorageUploaderConfig::dev_mode()).await?);
+    }
+
+    if std::env::var("PINATA_JWT").is_ok() {
+        let mut config = StorageUploaderConfig::default();
+        config.storage_uploader = StorageUploaderType::Pinata;
+        config.pinata_jwt = std::env::var("PINATA_JWT").ok();
+        config.pinata_api_url = parse_url_env("PINATA_API_URL")?;
+        config.ipfs_gateway_url = parse_url_env("IPFS_GATEWAY_URL")?;
+        return Ok(StandardUploader::from_config(&config).await?);
+    }
+
+    anyhow::bail!(
+        "no storage uploader configured: set RISC0_DEV_MODE, PINATA_JWT, or storage env vars"
+    );
 }
 
 pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<ProofResult> {
@@ -57,16 +96,14 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<ProofResul
     let lock_timeout: u32 = lock_timeout.parse()?;
     let ramp_up_period: u32 = ramp_up_period.parse()?;
 
-    // Creates a storage provider based on the environment variables.
+    // Creates a storage uploader based on environment variables.
     //
-    // If the environment variable `RISC0_DEV_MODE` is set, a temporary file storage provider is used.
+    // If the environment variable `RISC0_DEV_MODE` is set, a temporary file storage uploader is used.
     // Otherwise, the following environment variables are checked in order:
-    // - `PINATA_JWT`, `PINATA_API_URL`, `IPFS_GATEWAY_URL`: Pinata storage provider;
-    // - `S3_ACCESS`, `S3_SECRET`, `S3_BUCKET`, `S3_URL`, `AWS_REGION`: S3 storage provider.
-    // TODO: gcp storage provider
-    let storage_provider = storage_provider_from_env()?;
+    // - `PINATA_JWT`, `PINATA_API_URL`, `IPFS_GATEWAY_URL`: Pinata uploader.
+    let storage_uploader = storage_uploader_from_env().await?;
 
-    let image_url = storage_provider.upload_program(elf).await?;
+    let image_url = storage_uploader.upload_program(elf).await?;
     info!("Uploaded image to {}", image_url);
 
     let wallet_private_key = PrivateKeySigner::from_str(&wallet_private_key)?;
@@ -75,8 +112,8 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<ProofResul
     let mut deployment = Deployment::from_chain_id(chain_id);
 
     if let Some(dep) = deployment.as_mut() {
-        if dep.chain_id.unwrap() == NamedChain::Base as u64 && chain_id == 84532 {
-            dep.chain_id = Some(NamedChain::BaseSepolia as u64);
+        if dep.market_chain_id.unwrap() == NamedChain::Base as u64 && chain_id == 84532 {
+            dep.market_chain_id = Some(NamedChain::BaseSepolia as u64);
         }
     }
 
@@ -84,7 +121,7 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<ProofResul
     let boundless_client = ClientBuilder::new()
         .with_rpc_url(rpc_url)
         .with_deployment(deployment)
-        .with_storage_provider(Some(storage_provider))
+        .with_uploader(Some(storage_uploader))
         .with_private_key(wallet_private_key)
         .build()
         .await
@@ -181,8 +218,7 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<ProofResul
                 // slashed.
                 .with_timeout(timeout)
                 .with_lock_timeout(lock_timeout)
-                .with_ramp_up_period(ramp_up_period)
-                .with_bidding_start(get_current_timestamp_secs()),
+                .with_ramp_up_period(ramp_up_period),
         );
 
     // Send the request and wait for it to be completed.
@@ -195,10 +231,21 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<ProofResul
     tracing::info!("https://explorer.beboundless.xyz/orders/0x{request_id:x}");
 
     // Wait for the request to be fulfilled by the market, returning the journal and seal.
-    let (journal, seal) = boundless_client
+    let fullfillment = boundless_client
         .wait_for_request_fulfillment(request_id, Duration::from_secs(3), expires_at)
         .await?;
     tracing::info!("Request 0x{request_id:x} fulfilled");
+
+    let journal = fullfillment
+        .data()?
+        .journal()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Failed to get journal from fulfillment, this is likely a bug in the SDK"
+            )
+        })?
+        .clone();
+    let seal = fullfillment.seal;
 
     // write journal & seal to disk for debugging purposes
     std::fs::write("journal.bin", bincode::serialize(&journal)?)?;

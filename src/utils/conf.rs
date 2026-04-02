@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use config::{Config, Environment, File};
-use hyli_modules::modules::gcs_uploader::GCSConf;
 use hyli_modules::modules::websocket::WebSocketConfig;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
@@ -21,6 +20,12 @@ pub struct Consensus {
     pub solo: bool,
     /// The timestamp of the genesis block, in seconds since the Unix epoch.
     pub genesis_timestamp: u64,
+    /// Number of recent timeout certificates to keep for timeout recovery.
+    pub timeout_certificate_cache_size: usize,
+    /// Max number of prepares kept in memory for buffered prepares.
+    pub buffered_prepares_max_in_memory: usize,
+    /// Max number of prepares serialized to disk for buffered prepares.
+    pub buffered_prepares_max_serialized: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, IntoStaticStr)]
@@ -56,6 +61,9 @@ pub struct P2pConf {
     pub peers: Vec<String>,
     /// Time in milliseconds between pings to peers
     pub ping_interval: u64,
+    /// Timeouts used by the TCP P2P layer
+    #[serde(default)]
+    pub timeouts: P2pTimeoutsConf,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
@@ -67,6 +75,30 @@ pub enum P2pMode {
     /// Run a limited node that subscribes to another one for DA
     #[default]
     None,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(default)]
+pub struct P2pTimeoutsConf {
+    /// How long to avoid sending to a poisoned socket before retrying (ms)
+    pub poisoned_retry_interval_ms: u64,
+    /// Total time allowed for a TCP client handshake connection attempt (ms)
+    pub tcp_client_handshake_timeout_ms: u64,
+    /// Timeout when sending frames over TCP sockets (ms)
+    pub tcp_send_timeout_ms: u64,
+    /// Minimum delay before retrying a connect/handshake for the same peer (ms)
+    pub connect_retry_cooldown_ms: u64,
+}
+
+impl Default for P2pTimeoutsConf {
+    fn default() -> Self {
+        Self {
+            poisoned_retry_interval_ms: 10_000,
+            tcp_client_handshake_timeout_ms: 10_000,
+            tcp_send_timeout_ms: 10_000,
+            connect_retry_cooldown_ms: 3_000,
+        }
+    }
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +121,81 @@ pub struct NodeWebSocketConfig {
 pub struct IndexerConf {
     pub query_buffer_size: usize,
     pub persist_proofs: bool,
+    pub index_tx_events: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct OwnLaneConf {
+    pub suffixes: Vec<String>,
+    pub default_blob_suffix: String,
+    pub default_proof_suffix: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct VerifierWorkersBackendConf {
+    pub enabled: bool,
+    pub command: String,
+    pub args: Vec<String>,
+    pub verifiers: Vec<String>,
+    pub startup_timeout_ms: u64,
+    pub request_timeout_ms: u64,
+    pub auto_restart: bool,
+}
+
+impl Default for VerifierWorkersBackendConf {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            command: String::new(),
+            args: vec![],
+            verifiers: vec![],
+            startup_timeout_ms: 5_000,
+            request_timeout_ms: 30_000,
+            auto_restart: true,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct VerifierWorkersConf {
+    pub enabled: bool,
+    pub default_request_timeout_ms: u64,
+    pub default_restart_backoff_ms: u64,
+    pub backends: HashMap<String, VerifierWorkersBackendConf>,
+}
+
+impl Default for VerifierWorkersConf {
+    fn default() -> Self {
+        let mut backends = HashMap::new();
+        backends.insert(
+            "jolt".to_string(),
+            VerifierWorkersBackendConf {
+                enabled: true,
+                command: "hyli-jolt-verifier".to_string(),
+                verifiers: vec!["jolt-0.1".to_string()],
+                ..Default::default()
+            },
+        );
+        Self {
+            enabled: true,
+            default_request_timeout_ms: 30_000,
+            default_restart_backoff_ms: 1_000,
+            backends,
+        }
+    }
+}
+
+impl Default for OwnLaneConf {
+    fn default() -> Self {
+        let suffix = "default".to_string();
+        Self {
+            suffixes: vec![suffix.clone()],
+            default_blob_suffix: suffix.clone(),
+            default_proof_suffix: suffix,
+        }
+    }
 }
 
 impl From<NodeWebSocketConfig> for WebSocketConfig {
@@ -113,18 +220,21 @@ pub struct Conf {
     pub log_format: String,
     /// Directory name to store node state.
     pub data_directory: PathBuf,
+    /// If true, back up non-empty data directories with missing/empty checksum manifest on startup.
+    /// If false, delete that invalid directory and recreate it empty.
+    pub backup_on_invalid_manifest: bool,
 
     /// Peer-to-peer layer configuration
     pub p2p: P2pConf,
 
     // FastCatchup option, from the admin API of a running node.
     pub run_fast_catchup: bool,
-    /// If false, skip fast catchup if there are already files present. If true, always fast-catchup on startup.
-    pub fast_catchup_override: bool,
     /// Whether to also download older blocks after catchup.
     pub fast_catchup_backfill: bool,
-    /// IP address to use for fast catchup
-    pub fast_catchup_from: String,
+    /// Admin API addresses of peers to use for fast catchup (tried in order with fallback)
+    pub fast_catchup_peers: Vec<String>,
+    /// Timeout for each admin fast-catchup request, in seconds.
+    pub fast_catchup_timeout_secs: u64,
 
     // Validator options
     /// Consensus configuration
@@ -167,6 +277,8 @@ pub struct Conf {
     pub da_read_from: String,
     /// Timeout for DA client requests, in seconds, before it tries to reconnect to stream blocks
     pub da_timeout_client_secs: u64,
+    /// Fallback DA server addresses for block requests when blocks are missing
+    pub da_fallback_addresses: Vec<String>,
 
     /// Websocket configuration
     pub websocket: NodeWebSocketConfig,
@@ -174,8 +286,11 @@ pub struct Conf {
     /// Configuration for the indexer module
     pub indexer: IndexerConf,
 
-    /// GCSUploader configuration
-    pub gcs: GCSConf,
+    /// Own-lane configuration
+    pub own_lanes: OwnLaneConf,
+
+    /// External verifier worker configuration
+    pub verifier_workers: VerifierWorkersConf,
 }
 
 impl Conf {
@@ -199,6 +314,12 @@ impl Conf {
                     .prefix_separator("_")
                     .list_separator(",")
                     .with_list_parse_key("p2p.peers") // Parse this key into Vec<String>
+                    .with_list_parse_key("own_lanes.suffixes")
+                    .with_list_parse_key("fast_catchup_peers")
+                    .with_list_parse_key("verifier_workers.backends.jolt.args")
+                    .with_list_parse_key("verifier_workers.backends.jolt.verifiers")
+                    .with_list_parse_key("verifier_workers.backends.reth.args")
+                    .with_list_parse_key("verifier_workers.backends.reth.verifiers")
                     .try_parsing(true),
             )
             .set_override_option("data_directory", data_directory)?

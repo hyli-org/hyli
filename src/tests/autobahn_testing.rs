@@ -1,292 +1,27 @@
 //! This module is intended for "integration" testing of the consensus and other modules.
 
-macro_rules! build_tuple {
-    ($nodes:expr, 1) => {
-        ($nodes)
-    };
-    ($nodes:expr, 2) => {
-        ($nodes, $nodes)
-    };
-    ($nodes:expr, 3) => {
-        ($nodes, $nodes, $nodes)
-    };
-    ($nodes:expr, 4) => {
-        ($nodes, $nodes, $nodes, $nodes)
-    };
-    ($nodes:expr, 5) => {
-        ($nodes, $nodes, $nodes, $nodes, $nodes)
-    };
-    ($nodes:expr, 6) => {
-        ($nodes, $nodes, $nodes, $nodes, $nodes, $nodes)
-    };
-    ($nodes:expr, 7) => {
-        ($nodes, $nodes, $nodes, $nodes, $nodes, $nodes, $nodes)
-    };
-    ($nodes:expr, $count:expr) => {
-        panic!("More than {} nodes isn't supported", $count)
-    };
-}
-
-macro_rules! broadcast {
-    (description: $description:literal, from: $sender:expr, to: [$($node:expr),*]$(, message_matches: $pattern:pat $(=> $asserts:block)? )?) => {
-        {
-            // Construct the broadcast message with sender information
-            let message = $sender.assert_broadcast(format!("[broadcast from: {}] {}", stringify!($sender), $description).as_str()).await;
-
-            $({
-                let msg_variant_name: &'static str = message.msg.clone().into();
-                if let $pattern = &message.msg {
-                    $($asserts)?
-                } else {
-                    panic!("[broadcast from: {}] {}: Message {} did not match {}", stringify!($sender), $description, msg_variant_name, stringify!($pattern));
-                }
-            })?
-
-            // Distribute the message to each specified node
-            $(
-                $node.handle_msg(&message, (format!("[handling broadcast message from: {} at: {}] {}", stringify!($sender), stringify!($node), $description).as_str())).await;
-            )*
-
-            message
-        }
-    };
-}
-
-macro_rules! send {
-    (
-        description: $description:literal,
-        from: [$($node:expr),+],
-        to: $to:expr,
-        message_matches: $pattern:pat
-    ) => {
-        // Distribute the message to the target node from all specified nodes
-        ($({
-            let answer = $node.assert_send(
-                &$to.validator_pubkey(),
-                format!("[send from: {} to: {}] {}", stringify!($node), stringify!($to), $description).as_str()
-            ).await;
-
-            // If `message_matches` is provided, perform the pattern match
-            if let $pattern = &answer.msg {
-                // Execute optional assertions if provided
-            } else {
-                let msg_variant_name: &'static str = answer.msg.clone().into();
-                panic!(
-                    "[send from: {}] {}: Message {} did not match {}",
-                    stringify!($node),
-                    $description,
-                    msg_variant_name,
-                    stringify!($pattern)
-                );
-            }
-
-            // Handle the message
-            $to.handle_msg(
-                &answer,
-                format!("[handling sent message from: {} to: {}] {}", stringify!($node), stringify!($to), $description).as_str()
-            ).await;
-            answer
-        },)+)
-    };
-
-    (
-        description: $description:literal,
-        from: [$($node:expr; $pattern:pat $(=> $asserts:block)?),+],
-        to: $to:expr
-    ) => {
-        // Distribute the message to the target node from all specified nodes
-        ($({
-            let answer = $node.assert_send(
-                &$to.validator_pubkey(),
-                format!("[send from: {} to: {}] {}", stringify!($node), stringify!($to), $description).as_str()
-            ).await;
-
-            // If `message_matches` is provided, perform the pattern match
-            if let $pattern = &answer.msg {
-                // Execute optional assertions if provided
-                $($asserts)?
-            } else {
-                let msg_variant_name: &'static str = answer.msg.clone().into();
-                panic!(
-                    "[send from: {}] {}: Message {} did not match {}",
-                    stringify!($node),
-                    $description,
-                    msg_variant_name,
-                    stringify!($pattern)
-                );
-            }
-
-            // Handle the message
-            $to.handle_msg(
-                &answer,
-                format!("[handling sent message from: {} to: {}] {}", stringify!($node), stringify!($to), $description).as_str()
-            ).await;
-        },)+)
-    };
-}
-
-macro_rules! simple_commit_round {
-    (leader: $leader:expr, followers: [$($follower:expr),+]$(, joining: $joining:expr)?) => {{
-        let round_consensus_proposal;
-        let round_ticket;
-        let view: u64;
-        use $crate::tests::autobahn_testing::broadcast;
-        use $crate::tests::autobahn_testing::send;
-        broadcast! {
-            description: "Leader - Prepare",
-            from: $leader, to: [$($follower),+$(,$joining)?],
-            message_matches: ConsensusNetMessage::Prepare(cp, ticket, prep_view) => {
-                round_consensus_proposal = cp.clone();
-                round_ticket = ticket.clone();
-                view = *prep_view;
-            }
-        };
-
-        send! {
-            description: "Follower - PrepareVote",
-            from: [$($follower),+], to: $leader,
-            message_matches: ConsensusNetMessage::PrepareVote(_)
-        };
-
-        broadcast! {
-            description: "Leader - Confirm",
-            from: $leader, to: [$($follower),+$(,$joining)?],
-            message_matches: ConsensusNetMessage::Confirm(..)
-        };
-
-        send! {
-            description: "Follower - Confirm Ack",
-            from: [$($follower),+], to: $leader,
-            message_matches: ConsensusNetMessage::ConfirmAck(_)
-        };
-
-        broadcast! {
-            description: "Leader - Commit",
-            from: $leader, to: [$($follower),+$(,$joining)?],
-            message_matches: ConsensusNetMessage::Commit(..)
-        };
-
-        (round_consensus_proposal, round_ticket, view)
-    }};
-}
-
-macro_rules! disseminate {
-    (txs: [$($txs:expr),+], owner: $owner:expr, voters: [$($voter:expr),+]) => {{
-
-        let lane_id = LaneId($owner.validator_pubkey().clone());
-        let dp = $owner.create_data_proposal_on_top(lane_id, &[$($txs),+]);
-        $owner
-            .process_new_data_proposal(dp.clone())
-            .unwrap();
-        $owner.timer_tick().await.unwrap();
-
-        let dp_msg = broadcast! {
-            description: "Disseminate DataProposal",
-            from: $owner, to: [$($voter),+],
-            message_matches: MempoolNetMessage::DataProposal(_, _)
-        };
-
-        join_all(
-            [$(&mut $voter),+]
-                .iter_mut()
-                .map(|ctx| ctx.handle_processed_data_proposals()),
-        )
-        .await;
-
-        send! {
-            description: "Disseminated DataProposal Vote",
-            from: [$($voter),+], to: $owner,
-            message_matches: MempoolNetMessage::DataVote(..)
-        };
-
-        let poda = broadcast! {
-            description: "Disseminate Poda 1",
-            from: $owner, to: [$($voter),+],
-            message_matches: MempoolNetMessage::PoDAUpdate(hash, _signatures) => {
-                assert_eq!(hash, &dp.hashed());
-            }
-        };
-
-        let poda2 = broadcast! {
-            description: "Disseminate Poda 2",
-            from: $owner, to: [$($voter),+],
-            message_matches: MempoolNetMessage::PoDAUpdate(hash, _signatures) => {
-                assert_eq!(hash, &dp.hashed());
-            }
-        };
-
-        let poda3 = broadcast! {
-            description: "Disseminate Poda 3",
-            from: $owner, to: [$($voter),+],
-            message_matches: MempoolNetMessage::PoDAUpdate(hash, _signatures) => {
-                assert_eq!(hash, &dp.hashed());
-            }
-        };
-
-        (dp, dp_msg, poda, poda2, poda3)
-    }};
-}
-
-macro_rules! assert_chanmsg_matches {
-    ($chan: expr, $pat:pat => $block:block) => {{
-        let var = $chan.try_recv().unwrap();
-        if let $pat = var {
-            $block
-        } else {
-            panic!("Var {:?} should match {}", var, stringify!($pat));
-        }
-    }};
-}
-
-pub(crate) use assert_chanmsg_matches;
-use assertables::assert_matches;
-pub(crate) use broadcast;
-pub(crate) use build_tuple;
-use futures::future::join_all;
-use hyli_model::utils::TimestampMs;
-use hyli_modules::{bus::dont_use_this::get_sender, node_state::NodeState};
-pub(crate) use send;
-pub(crate) use simple_commit_round;
-
-macro_rules! build_nodes {
-    ($count:tt) => {{
-        async {
-            let cryptos: Vec<BlstCrypto> = AutobahnTestCtx::generate_cryptos($count);
-
-            let mut nodes = vec![];
-
-            for i in 0..$count {
-                let crypto = cryptos.get(i).unwrap().clone();
-                let mut autobahn_node =
-                    AutobahnTestCtx::new(format!("node-{i}").as_ref(), crypto).await;
-
-                autobahn_node.consensus_ctx.setup_node(i, &cryptos);
-                autobahn_node.mempool_ctx.setup_node(&cryptos);
-                nodes.push(autobahn_node);
-            }
-
-            build_tuple!(nodes.remove(0), $count)
-        }
-    }};
-}
-
+use super::autobahn_testing_macros::*;
 use crate::{
-    bus::{
-        bus_client, command_response::Query, dont_use_this::get_receiver, metrics::BusMetrics,
-        SharedMessageBus,
-    },
+    bus::{bus_client, command_response::Query, dont_use_this::get_receiver, SharedMessageBus},
     consensus::{
         test::ConsensusTestCtx, ConsensusEvent, ConsensusNetMessage, TCKind, Ticket, TimeoutKind,
     },
     mempool::{
         tests::{make_register_contract_tx, MempoolTestCtx},
-        MempoolNetMessage, QueryNewCut, ValidatorDAG,
+        MempoolNetMessage, QueryNewCut,
     },
     model::*,
     p2p::{network::OutboundMessage, P2PCommand},
 };
+use assertables::assert_matches;
+use futures::future::join_all;
 use hyli_crypto::BlstCrypto;
+use hyli_model::utils::TimestampMs;
 use hyli_modules::handle_messages;
+use hyli_modules::{
+    bus::{dont_use_this::get_sender, BusEnvelope},
+    node_state::NodeState,
+};
 use tracing::info;
 
 bus_client!(
@@ -296,25 +31,19 @@ bus_client!(
 );
 
 pub struct AutobahnTestCtx {
-    shared_bus: SharedMessageBus,
-    consensus_ctx: ConsensusTestCtx,
-    mempool_ctx: MempoolTestCtx,
+    pub shared_bus: SharedMessageBus,
+    pub consensus_ctx: ConsensusTestCtx,
+    pub mempool_ctx: MempoolTestCtx,
 }
 
 impl AutobahnTestCtx {
-    async fn new(name: &str, crypto: BlstCrypto) -> Self {
-        let shared_bus = SharedMessageBus::new(BusMetrics::global("global".to_string()));
+    pub async fn new(name: &str, crypto: BlstCrypto) -> Self {
+        let shared_bus = SharedMessageBus::new();
         let event_receiver = get_receiver::<ConsensusEvent>(&shared_bus).await;
         let p2p_receiver = get_receiver::<P2PCommand>(&shared_bus).await;
         let consensus_out_receiver = get_receiver::<OutboundMessage>(&shared_bus).await;
-        let mempool_out_receiver = get_receiver::<OutboundMessage>(&shared_bus).await;
-        let mempool_event_receiver = get_receiver::<MempoolBlockEvent>(&shared_bus).await;
-        let mempool_status_event_receiver = get_receiver::<MempoolStatusEvent>(&shared_bus).await;
-
         let consensus = ConsensusTestCtx::build_consensus(&shared_bus, crypto.clone()).await;
-        let mempool = MempoolTestCtx::build_mempool(&shared_bus, crypto).await;
-
-        let mempool_sync_request_sender = mempool.start_mempool_sync();
+        let mempool_ctx = MempoolTestCtx::new_with_shared_bus(name, &shared_bus, crypto).await;
 
         AutobahnTestCtx {
             shared_bus,
@@ -325,14 +54,7 @@ impl AutobahnTestCtx {
                 consensus,
                 name: name.to_string(),
             },
-            mempool_ctx: MempoolTestCtx {
-                name: name.to_string(),
-                out_receiver: mempool_out_receiver,
-                mempool_event_receiver,
-                mempool_status_event_receiver,
-                mempool,
-                mempool_sync_request_sender,
-            },
+            mempool_ctx,
         }
     }
 
@@ -350,7 +72,7 @@ impl AutobahnTestCtx {
     }
 
     /// Spawn a coroutine to answer the command response call of start_round, with the current of mempool
-    async fn start_round_with_cut_from_mempool(&mut self, ts: TimestampMs) {
+    pub async fn start_round_with_cut_from_mempool(&mut self, ts: TimestampMs) {
         let staking = self.consensus_ctx.staking();
         let latest_cut: Cut = self.mempool_ctx.gen_cut(&staking);
 
@@ -374,28 +96,9 @@ impl AutobahnTestCtx {
     }
 
     /// Just start the round and wait for the timeout
-    async fn start_round_with_last_seen_cut(&mut self, ts: TimestampMs) {
+    pub async fn start_round_with_last_seen_cut(&mut self, ts: TimestampMs) {
         self.consensus_ctx.start_round_at(ts).await;
     }
-}
-
-fn create_poda(
-    data_proposal_hash: DataProposalHash,
-    line_size: LaneBytesSize,
-    nodes: &[&AutobahnTestCtx],
-) -> hyli_crypto::Signed<(DataProposalHash, LaneBytesSize), AggregateSignature> {
-    let mut signed_messages: Vec<ValidatorDAG> = nodes
-        .iter()
-        .map(|node| {
-            node.mempool_ctx
-                .sign_data((data_proposal_hash.clone(), line_size))
-                .unwrap()
-        })
-        .collect();
-    signed_messages.sort_by(|a, b| a.signature.cmp(&b.signature));
-
-    let aggregates: Vec<&ValidatorDAG> = signed_messages.iter().collect();
-    BlstCrypto::aggregate((data_proposal_hash.clone(), line_size), &aggregates).unwrap()
 }
 
 #[test_log::test(tokio::test)]
@@ -412,15 +115,26 @@ async fn autobahn_basic_flow() {
         .mempool_ctx
         .process_new_data_proposal(dp.clone())
         .unwrap();
+    node1
+        .mempool_ctx
+        .process_dissemination_events()
+        .await
+        .expect("process dissemination events");
     node1.mempool_ctx.timer_tick().await.unwrap();
+    node1
+        .mempool_ctx
+        .process_dissemination_events()
+        .await
+        .expect("process dissemination events");
 
-    broadcast! {
+    let message = broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, data) => {
-            assert_eq!(data.txs.len(), 2);
-        }
+        message_matches: MempoolNetMessage::DataProposal(..)
     };
+    if let MempoolNetMessage::DataProposal(_, _, data, _) = &message.msg {
+        assert_eq!(data.txs.len(), 2);
+    }
 
     join_all(
         [
@@ -433,9 +147,19 @@ async fn autobahn_basic_flow() {
     )
     .await;
 
-    send! {
+    broadcast! {
         description: "Disseminated Tx Vote",
-        from: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx], to: node1.mempool_ctx,
+        from: node2.mempool_ctx, to: [node1.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
+        message_matches: MempoolNetMessage::DataVote(..)
+    };
+    broadcast! {
+        description: "Disseminated Tx Vote",
+        from: node3.mempool_ctx, to: [node1.mempool_ctx, node2.mempool_ctx, node4.mempool_ctx],
+        message_matches: MempoolNetMessage::DataVote(..)
+    };
+    broadcast! {
+        description: "Disseminated Tx Vote",
+        from: node4.mempool_ctx, to: [node1.mempool_ctx, node2.mempool_ctx, node3.mempool_ctx],
         message_matches: MempoolNetMessage::DataVote(..)
     };
 
@@ -450,28 +174,23 @@ async fn autobahn_basic_flow() {
         .await;
 
     let consensus_proposal;
-
-    let poda = create_poda(
-        data_proposal_hash_node1.clone(),
-        node1_l_size,
-        &[&node1, &node2, &node3, &node4],
-    );
+    let staking = node1.consensus_ctx.staking();
+    let f = staking.compute_f();
 
     broadcast! {
         description: "Prepare",
         from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx, node4.consensus_ctx],
         message_matches: ConsensusNetMessage::Prepare(cp, ..) => {
             consensus_proposal = cp.clone();
-            assert_eq!(
-                cp
-                    .cut
-                    .clone()
-                    .iter()
-                    .find(|(lane_id, _hash, _size, _poda)|
-                        lane_id == &node1.mempool_ctx.own_lane()
-                    ),
-                Some((node1.mempool_ctx.own_lane(), data_proposal_hash_node1, node1_l_size, poda.signature)).as_ref()
-            );
+            let entry = cp
+                .cut
+                .iter()
+                .find(|(lane_id, _hash, _size, _poda)| lane_id == &node1.mempool_ctx.own_lane())
+                .expect("expected lane entry in cut");
+            assert_eq!(entry.1, data_proposal_hash_node1);
+            assert_eq!(entry.2, node1_l_size);
+            let voting_power = staking.compute_voting_power(entry.3.validators.as_slice());
+            assert!(voting_power > f);
         }
     };
 
@@ -553,7 +272,7 @@ async fn mempool_broadcast_multiple_data_proposals() {
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: MempoolNetMessage::DataProposal(..)
     };
 
     join_all(
@@ -567,15 +286,27 @@ async fn mempool_broadcast_multiple_data_proposals() {
     )
     .await;
 
-    send! {
+    broadcast! {
         description: "Disseminated Tx Vote",
-        from: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx], to: node1.mempool_ctx,
+        from: node2.mempool_ctx, to: [node1.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
+        message_matches: MempoolNetMessage::DataVote(..)
+    };
+    broadcast! {
+        description: "Disseminated Tx Vote",
+        from: node3.mempool_ctx, to: [node1.mempool_ctx, node2.mempool_ctx, node4.mempool_ctx],
+        message_matches: MempoolNetMessage::DataVote(..)
+    };
+    broadcast! {
+        description: "Disseminated Tx Vote",
+        from: node4.mempool_ctx, to: [node1.mempool_ctx, node2.mempool_ctx, node3.mempool_ctx],
         message_matches: MempoolNetMessage::DataVote(..)
     };
 
-    node1.mempool_ctx.assert_broadcast("poda update f+1").await;
-    node1.mempool_ctx.assert_broadcast("poda update 2f+1").await;
-    node1.mempool_ctx.assert_broadcast("poda update 3f+1").await;
+    node1
+        .mempool_ctx
+        .process_dissemination_events()
+        .await
+        .expect("process dissemination events");
 
     // Second data proposal
 
@@ -594,7 +325,7 @@ async fn mempool_broadcast_multiple_data_proposals() {
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: MempoolNetMessage::DataProposal(..)
     };
 
     join_all(
@@ -608,64 +339,36 @@ async fn mempool_broadcast_multiple_data_proposals() {
     )
     .await;
 
-    send! {
+    broadcast! {
         description: "Disseminated Tx Vote",
-        from: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx], to: node1.mempool_ctx,
+        from: node2.mempool_ctx, to: [node1.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
+        message_matches: MempoolNetMessage::DataVote(..)
+    };
+    broadcast! {
+        description: "Disseminated Tx Vote",
+        from: node3.mempool_ctx, to: [node1.mempool_ctx, node2.mempool_ctx, node4.mempool_ctx],
+        message_matches: MempoolNetMessage::DataVote(..)
+    };
+    broadcast! {
+        description: "Disseminated Tx Vote",
+        from: node4.mempool_ctx, to: [node1.mempool_ctx, node2.mempool_ctx, node3.mempool_ctx],
         message_matches: MempoolNetMessage::DataVote(..)
     };
 }
 
 #[test_log::test(tokio::test)]
-async fn mempool_podaupdate_too_early() {
+async fn mempool_votes_before_data_proposal() {
     let (mut node1, mut node2, mut node3, mut node4) = build_nodes!(4).await;
 
     // First data proposal
 
     let register_tx = make_register_contract_tx(ContractName::new("test1"));
 
-    let dp = node1.mempool_ctx.create_data_proposal(None, &[register_tx]);
-    let lane_id = LaneId(node1.mempool_ctx.validator_pubkey().clone());
-    node1
-        .mempool_ctx
-        .process_new_data_proposal(dp.clone())
-        .unwrap();
-    node1.mempool_ctx.timer_tick().await.unwrap();
-
-    let dp_msg = broadcast! {
-        description: "Disseminate Tx",
-        from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
-    };
-
-    join_all(
-        [&mut node2.mempool_ctx, &mut node3.mempool_ctx]
-            .iter_mut()
-            .map(|ctx| ctx.handle_processed_data_proposals()),
-    )
-    .await;
-
-    send! {
-        description: "Disseminated Tx Vote",
-        from: [node2.mempool_ctx, node3.mempool_ctx], to: node1.mempool_ctx,
-        message_matches: MempoolNetMessage::DataVote(..)
-    };
-
-    let poda = broadcast! {
-        description: "Disseminate Tx",
-        from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx],
-        message_matches: MempoolNetMessage::PoDAUpdate(hash, signatures) => {
-            assert_eq!(hash, &dp.hashed());
-            assert_eq!(2, signatures.len());
-        }
-    };
-
-    let poda2 = broadcast! {
-        description: "Disseminate Tx",
-        from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx],
-        message_matches: MempoolNetMessage::PoDAUpdate(hash, signatures) => {
-            assert_eq!(hash, &dp.hashed());
-            assert_eq!(3, signatures.len());
-        }
+    let lane_id = LaneId::new(node1.mempool_ctx.validator_pubkey().clone());
+    let (dp, dp_msg, votes) = disseminate! {
+        txs: [register_tx],
+        owner: node1.mempool_ctx,
+        voters: [node2.mempool_ctx, node3.mempool_ctx]
     };
 
     let assert_nb_signatures = |node: &AutobahnTestCtx, n: usize| {
@@ -689,12 +392,15 @@ async fn mempool_podaupdate_too_early() {
 
     assert_eq!(node4.mempool_ctx.current_hash(&lane_id), None);
 
-    // Handle Poda before data proposal (simulate a data proposal still being processed, not recorded yet)
+    // Handle votes before data proposal (simulate a data proposal still being processed, not recorded yet)
 
-    node4.mempool_ctx.handle_msg(&poda, "Poda handling").await;
     node4
         .mempool_ctx
-        .handle_msg(&poda2, "Poda handling 2")
+        .handle_msg(&votes[0], "Vote handling")
+        .await;
+    node4
+        .mempool_ctx
+        .handle_msg(&votes[1], "Vote handling 2")
         .await;
     node4.mempool_ctx.handle_msg(&dp_msg, "Data Proposal").await;
 
@@ -703,20 +409,16 @@ async fn mempool_podaupdate_too_early() {
     // 4 because the 3 signatures are the ones of the other nodes, so + the node 4 signature it makes 4 signatures
     assert_nb_signatures(&node4, 4);
 
-    send! {
+    broadcast! {
         description: "Disseminated Tx Vote",
-        from: [node4.mempool_ctx], to: node1.mempool_ctx,
+        from: node4.mempool_ctx, to: [node1.mempool_ctx, node2.mempool_ctx, node3.mempool_ctx],
         message_matches: MempoolNetMessage::DataVote(..)
     };
-
-    broadcast! {
-        description: "Disseminate Tx",
-        from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::PoDAUpdate(hash, signatures) => {
-            assert_eq!(hash, &dp.hashed());
-            assert_eq!(4, signatures.len());
-        }
-    };
+    node1
+        .mempool_ctx
+        .process_dissemination_events()
+        .await
+        .expect("process dissemination events");
 
     assert_nb_signatures(&node2, 4);
     assert_nb_signatures(&node3, 4);
@@ -724,7 +426,10 @@ async fn mempool_podaupdate_too_early() {
 }
 
 #[test_log::test(tokio::test)]
-async fn consensus_missed_prepare() {
+async fn consensus_missed_prepare_then_timeout() {
+    // Scenario here - a node misses a prepare at round 2, then timeout at R3V0,
+    // Upon receiving the Prepare for R3V1, it seems a QC for R2, which it can process,
+    // thus catching up.
     let (mut node1, mut node2, mut node3, mut node4) = build_nodes!(4).await;
 
     // First data proposal
@@ -898,14 +603,14 @@ async fn mempool_fail_to_vote_on_fork() {
         .unwrap();
     node1.mempool_ctx.timer_tick().await.unwrap();
 
-    let dp1_check;
-
-    broadcast! {
+    let message = broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, data) => {
-            dp1_check = data.clone();
-        }
+        message_matches: MempoolNetMessage::DataProposal(..)
+    };
+    let dp1_check = match &message.msg {
+        MempoolNetMessage::DataProposal(_, _, data, _) => data.clone(),
+        _ => panic!("Expected DataProposal message"),
     };
 
     assert_eq!(dp1, dp1_check);
@@ -921,15 +626,27 @@ async fn mempool_fail_to_vote_on_fork() {
     )
     .await;
 
-    send! {
+    broadcast! {
         description: "Disseminated Tx Vote",
-        from: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx], to: node1.mempool_ctx,
+        from: node2.mempool_ctx, to: [node1.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
+        message_matches: MempoolNetMessage::DataVote(..)
+    };
+    broadcast! {
+        description: "Disseminated Tx Vote",
+        from: node3.mempool_ctx, to: [node1.mempool_ctx, node2.mempool_ctx, node4.mempool_ctx],
+        message_matches: MempoolNetMessage::DataVote(..)
+    };
+    broadcast! {
+        description: "Disseminated Tx Vote",
+        from: node4.mempool_ctx, to: [node1.mempool_ctx, node2.mempool_ctx, node3.mempool_ctx],
         message_matches: MempoolNetMessage::DataVote(..)
     };
 
-    node1.mempool_ctx.assert_broadcast("poda update f+1").await;
-    node1.mempool_ctx.assert_broadcast("poda update 2f+1").await;
-    node1.mempool_ctx.assert_broadcast("poda update 3f+1").await;
+    node1
+        .mempool_ctx
+        .process_dissemination_events()
+        .await
+        .expect("process dissemination events");
 
     // Second data proposal
 
@@ -948,7 +665,7 @@ async fn mempool_fail_to_vote_on_fork() {
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: MempoolNetMessage::DataProposal(..)
     };
 
     join_all(
@@ -962,9 +679,19 @@ async fn mempool_fail_to_vote_on_fork() {
     )
     .await;
 
-    send! {
+    broadcast! {
         description: "Disseminated Tx Vote",
-        from: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx], to: node1.mempool_ctx,
+        from: node2.mempool_ctx, to: [node1.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
+        message_matches: MempoolNetMessage::DataVote(..)
+    };
+    broadcast! {
+        description: "Disseminated Tx Vote",
+        from: node3.mempool_ctx, to: [node1.mempool_ctx, node2.mempool_ctx, node4.mempool_ctx],
+        message_matches: MempoolNetMessage::DataVote(..)
+    };
+    broadcast! {
+        description: "Disseminated Tx Vote",
+        from: node4.mempool_ctx, to: [node1.mempool_ctx, node2.mempool_ctx, node3.mempool_ctx],
         message_matches: MempoolNetMessage::DataVote(..)
     };
 
@@ -972,13 +699,23 @@ async fn mempool_fail_to_vote_on_fork() {
     // dp1 <- dp2
     //     <- dp3
 
-    let dp_fork_3 = DataProposal::new(Some(dp1.hashed()), vec![Transaction::default()]);
+    let dp_fork_3 = DataProposal::new(dp1.hashed(), vec![Transaction::default()]);
+    let cumul_size = node1
+        .mempool_ctx
+        .current_size_of(&node1.mempool_ctx.own_lane())
+        .unwrap_or_default()
+        + dp_fork_3.estimate_size();
 
     let data_proposal_fork_3 = node1
         .mempool_ctx
         .create_net_message(MempoolNetMessage::DataProposal(
+            node1.mempool_ctx.own_lane(),
             dp_fork_3.hashed(),
             dp_fork_3.clone(),
+            node1
+                .mempool_ctx
+                .sign_data((dp_fork_3.hashed(), cumul_size))
+                .unwrap(),
         ))
         .unwrap();
 
@@ -1021,13 +758,325 @@ async fn mempool_fail_to_vote_on_fork() {
 }
 
 #[test_log::test(tokio::test)]
-async fn autobahn_rejoin_flow() {
+async fn autobahn_rejoin_flow_in_consensus_with_tc() {
+    // Ordered so that node1 is leader at slot 3
+    let (mut node3, mut node2, mut node1, mut joining_node) = build_nodes!(4).await;
+
+    // Let's setup the consensus so our joining node has some blocks to catch up.
+    ConsensusTestCtx::setup_for_round(
+        &mut [
+            &mut node1.consensus_ctx,
+            &mut node2.consensus_ctx,
+            &mut node3.consensus_ctx,
+        ],
+        3,
+        0,
+    );
+    joining_node.consensus_ctx.setup_for_rejoining(0);
+
+    // Let's setup a NodeState on this bus
+    let mut ns = NodeState::create("test");
+    let ns_event_sender = get_sender::<NodeStateEvent>(&joining_node.shared_bus).await;
+    let mut ns_event_receiver = get_receiver::<NodeStateEvent>(&joining_node.shared_bus).await;
+    let mut commit_receiver = get_receiver::<ConsensusEvent>(&node1.shared_bus).await;
+
+    // Prep blocks 0, 1, 2
+    let mut blocks = vec![SignedBlock {
+        data_proposals: vec![],
+        certificate: AggregateSignature::default(),
+        consensus_proposal: ConsensusProposal {
+            slot: 0,
+            ..ConsensusProposal::default()
+        },
+    }];
+    for _ in 0..2 {
+        blocks.push(SignedBlock {
+            data_proposals: vec![],
+            certificate: AggregateSignature::default(),
+            consensus_proposal: ConsensusProposal {
+                slot: blocks.len() as u64,
+                parent_hash: blocks[blocks.len() - 1].hashed(),
+                ..ConsensusProposal::default()
+            },
+        });
+    }
+
+    // Catchup up to the last block, but don't actually process the last block message yet.
+    for signed_block in blocks.get(0..blocks.len() - 1).unwrap() {
+        let node_state_block = ns.handle_signed_block(signed_block.clone()).unwrap();
+        ns_event_sender
+            .send(BusEnvelope::from_message(NodeStateEvent::NewBlock(
+                node_state_block,
+            )))
+            .unwrap();
+    }
+    while let Ok(event) = ns_event_receiver.try_recv() {
+        let event = event.into_message();
+        info!("{:?}", event);
+        joining_node
+            .consensus_ctx
+            .handle_node_state_event(event)
+            .await
+            .expect("should handle data event");
+    }
+
+    // At this point DA is caught up, node state is missing one block,
+    // consensus is still on slot 0.
+
+    info!("Starting rounds...");
+
+    // Do one round - we won't catch up yet.
+    node1
+        .start_round_with_cut_from_mempool(TimestampMs(1000 * 3))
+        .await;
+    simple_commit_round! {
+        leader: node1.consensus_ctx,
+        followers: [node2.consensus_ctx, node3.consensus_ctx],
+        joining: joining_node.consensus_ctx
+    };
+
+    // Now process block 2
+    let signed_block = blocks.get(2).unwrap().clone();
+    let node_state_block = ns.handle_signed_block(signed_block).unwrap();
+    ns_event_sender
+        .send(BusEnvelope::from_message(NodeStateEvent::NewBlock(
+            node_state_block,
+        )))
+        .unwrap();
+    while let Ok(event) = ns_event_receiver.try_recv() {
+        let event = event.into_message();
+        info!("{:?}", event);
+        joining_node
+            .consensus_ctx
+            .handle_node_state_event(event)
+            .await
+            .expect("should handle data event");
+    }
+
+    // We still aren't caught up
+    assert!(joining_node.consensus_ctx.is_joining());
+
+    // Now we are leader, but we are not caught up, so everyone time else times out.
+    ConsensusTestCtx::timeout(&mut [
+        &mut node1.consensus_ctx,
+        &mut node2.consensus_ctx,
+        &mut node3.consensus_ctx,
+    ])
+    .await;
+
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx], // joining_node skipped to avoid spurious errors
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node2.consensus_ctx, to: [node1.consensus_ctx, node3.consensus_ctx], // joining_node skipped to avoid spurious errors
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node3.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx], // joining_node skipped to avoid spurious errors
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+
+    broadcast! {
+        description: "Follower - Timeout Certificate",
+        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx], // joining_node skipped to avoid spurious errors
+        message_matches: ConsensusNetMessage::TimeoutCertificate(..)
+    };
+
+    info!("Followers timeout");
+
+    // At this point, slot 4, view 1 is started by node 3.
+    node3
+        .start_round_with_cut_from_mempool(TimestampMs(4100))
+        .await;
+
+    simple_commit_round! {
+        leader: node3.consensus_ctx,
+        followers: [node1.consensus_ctx, node2.consensus_ctx],
+        joining: joining_node.consensus_ctx
+    };
+
+    // We still aren't caught up
+    assert!(joining_node.consensus_ctx.is_joining());
+
+    // Catch up the two blocks
+    for _ in 0..2 {
+        while let Ok(event) = commit_receiver.try_recv() {
+            let ConsensusEvent::CommitConsensusProposal(ccp) = event.into_message();
+            if ccp.consensus_proposal.slot > 2 {
+                let signed_block = SignedBlock {
+                    data_proposals: vec![],
+                    certificate: ccp.certificate,
+                    consensus_proposal: ccp.consensus_proposal,
+                };
+                let node_state_block = ns.handle_signed_block(signed_block.clone()).unwrap();
+                ns_event_sender
+                    .send(BusEnvelope::from_message(NodeStateEvent::NewBlock(
+                        node_state_block,
+                    )))
+                    .unwrap();
+
+                blocks.push(signed_block);
+            }
+        }
+        while let Ok(event) = ns_event_receiver.try_recv() {
+            let event = event.into_message();
+            joining_node
+                .consensus_ctx
+                .handle_node_state_event(event)
+                .await
+                .expect("should handle data event");
+        }
+    }
+
+    // Now node3 (again, quirk of current leader selection) starts slot 5 view 0
+    node3
+        .start_round_with_cut_from_mempool(TimestampMs(5000))
+        .await;
+
+    simple_commit_round! {
+        leader: node3.consensus_ctx,
+        followers: [node1.consensus_ctx, node2.consensus_ctx],
+        joining: joining_node.consensus_ctx
+    };
+
+    // We are caught up
+    assert!(!joining_node.consensus_ctx.is_joining());
+}
+
+#[test_log::test(tokio::test)]
+// Test an edge case where all nodes are stopped and must restart from a certain height.
+// Case A is via timeout certificates.
+async fn autobahn_all_restart_flow_a() {
+    let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
+
+    ConsensusTestCtx::setup_for_round(
+        &mut [
+            &mut node0.consensus_ctx,
+            &mut node1.consensus_ctx,
+            &mut node2.consensus_ctx,
+            &mut node3.consensus_ctx,
+        ],
+        3,
+        0,
+    );
+
+    // Mark all nodes as joining
+    for node in [&mut node0, &mut node1, &mut node2, &mut node3] {
+        node.consensus_ctx.setup_for_rejoining(3);
+    }
+
+    // Nodes 0/1/2 time out
+    // Node 3 will receive the TC directly to test both paths
+    // (node 3 also happens to be leader)
+    ConsensusTestCtx::timeout(&mut [
+        &mut node0.consensus_ctx,
+        &mut node1.consensus_ctx,
+        &mut node2.consensus_ctx,
+    ])
+    .await;
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node1.consensus_ctx, to: [node0.consensus_ctx, node2.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node2.consensus_ctx, to: [node0.consensus_ctx, node1.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout Certificate",
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::TimeoutCertificate(..)
+    };
+
+    // Now node3 starts slot 3 view 1
+    node3
+        .start_round_with_cut_from_mempool(TimestampMs(4100))
+        .await;
+    simple_commit_round! {
+        leader: node3.consensus_ctx,
+        followers: [node0.consensus_ctx, node1.consensus_ctx, node2.consensus_ctx]
+    };
+}
+
+#[test_log::test(tokio::test)]
+// Test an edge case where all nodes are stopped and must restart from a certain height.
+// Case B is directly via the timeout flow.
+async fn autobahn_all_restart_flow_b() {
+    let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
+
+    ConsensusTestCtx::setup_for_round(
+        &mut [
+            &mut node0.consensus_ctx,
+            &mut node1.consensus_ctx,
+            &mut node2.consensus_ctx,
+            &mut node3.consensus_ctx,
+        ],
+        3,
+        0,
+    );
+
+    // Mark all nodes as joining
+    for node in [&mut node0, &mut node1, &mut node2, &mut node3] {
+        node.consensus_ctx.setup_for_rejoining(3);
+    }
+
+    // Nodes 0/1/2/3 time out
+    ConsensusTestCtx::timeout(&mut [
+        &mut node0.consensus_ctx,
+        &mut node1.consensus_ctx,
+        &mut node2.consensus_ctx,
+        &mut node3.consensus_ctx,
+    ])
+    .await;
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node1.consensus_ctx, to: [node0.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node2.consensus_ctx, to: [node0.consensus_ctx, node1.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node3.consensus_ctx, to: [node0.consensus_ctx, node1.consensus_ctx, node2.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+
+    // Now node3 starts slot 3 view 1
+    node3
+        .start_round_with_cut_from_mempool(TimestampMs(4100))
+        .await;
+    simple_commit_round! {
+        leader: node3.consensus_ctx,
+        followers: [node0.consensus_ctx, node1.consensus_ctx, node2.consensus_ctx]
+    };
+}
+
+#[test_log::test(tokio::test)]
+async fn autobahn_rejoin_flow_outside_consensus() {
     let (mut node1, mut node2) = build_nodes!(2).await;
 
     // Let's setup the consensus so our joining node has some blocks to catch up.
     ConsensusTestCtx::setup_for_round(
         &mut [&mut node1.consensus_ctx, &mut node2.consensus_ctx],
-        0,
         3,
         0,
     );
@@ -1039,7 +1088,7 @@ async fn autobahn_rejoin_flow() {
         .setup_for_joining(&[&node1.consensus_ctx, &node2.consensus_ctx]);
 
     // Let's setup a NodeState on this bus
-    let mut ns = NodeState::create("test".to_string(), "test");
+    let mut ns = NodeState::create("test");
 
     let mut blocks = vec![SignedBlock {
         data_proposals: vec![],
@@ -1070,10 +1119,13 @@ async fn autobahn_rejoin_flow() {
     for signed_block in blocks.get(0..blocks.len() - 1).unwrap() {
         let node_state_block = ns.handle_signed_block(signed_block.clone()).unwrap();
         ns_event_sender
-            .send(NodeStateEvent::NewBlock(node_state_block))
+            .send(BusEnvelope::from_message(NodeStateEvent::NewBlock(
+                node_state_block,
+            )))
             .unwrap();
     }
     while let Ok(event) = ns_event_receiver.try_recv() {
+        let event = event.into_message();
         info!("{:?}", event);
         joining_node
             .consensus_ctx
@@ -1103,10 +1155,13 @@ async fn autobahn_rejoin_flow() {
     let signed_block = blocks.get(2).unwrap().clone();
     let node_state_block = ns.handle_signed_block(signed_block).unwrap();
     ns_event_sender
-        .send(NodeStateEvent::NewBlock(node_state_block))
+        .send(BusEnvelope::from_message(NodeStateEvent::NewBlock(
+            node_state_block,
+        )))
         .unwrap();
 
     while let Ok(event) = ns_event_receiver.try_recv() {
+        let event = event.into_message();
         info!("{:?}", event);
         joining_node
             .consensus_ctx
@@ -1134,7 +1189,7 @@ async fn autobahn_rejoin_flow() {
     // Catch up
     for _ in 0..4 {
         while let Ok(event) = commit_receiver.try_recv() {
-            let ConsensusEvent::CommitConsensusProposal(ccp) = event;
+            let ConsensusEvent::CommitConsensusProposal(ccp) = event.into_message();
             if ccp.consensus_proposal.slot > 2 {
                 let signed_block = SignedBlock {
                     data_proposals: vec![],
@@ -1143,13 +1198,16 @@ async fn autobahn_rejoin_flow() {
                 };
                 let node_state_block = ns.handle_signed_block(signed_block.clone()).unwrap();
                 ns_event_sender
-                    .send(NodeStateEvent::NewBlock(node_state_block))
+                    .send(BusEnvelope::from_message(NodeStateEvent::NewBlock(
+                        node_state_block,
+                    )))
                     .unwrap();
 
                 blocks.push(signed_block);
             }
         }
         while let Ok(event) = ns_event_receiver.try_recv() {
+            let event = event.into_message();
             joining_node
                 .consensus_ctx
                 .handle_node_state_event(event)
@@ -1182,7 +1240,7 @@ async fn protocol_fees() {
     let register_tx = make_register_contract_tx(ContractName::new("test1"));
     let register_tx_2 = make_register_contract_tx(ContractName::new("test2"));
 
-    let (dp, _, _, _, _) = disseminate! {
+    let (dp, _, _) = disseminate! {
         txs: [register_tx, register_tx_2],
         owner: node1.mempool_ctx,
         voters: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx]
@@ -1223,7 +1281,7 @@ async fn protocol_fees() {
     let register_tx_2 = make_register_contract_tx(ContractName::new("test4"));
     let register_tx_3 = make_register_contract_tx(ContractName::new("test5"));
 
-    let (dp, _, _, _, _) = disseminate! {
+    let (dp, _, _) = disseminate! {
         txs: [register_tx, register_tx_2, register_tx_3],
         owner: node2.mempool_ctx,
         voters: [node1.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx]
@@ -1307,7 +1365,6 @@ async fn autobahn_missed_a_confirm_message() {
             &mut node3.consensus_ctx,
             &mut node4.consensus_ctx,
         ],
-        0,
         5,
         0,
     );
@@ -1404,7 +1461,6 @@ async fn autobahn_missed_confirm_and_commit_messages() {
             &mut node3.consensus_ctx,
             &mut node4.consensus_ctx,
         ],
-        0,
         5,
         0,
     );
@@ -1480,173 +1536,96 @@ async fn autobahn_missed_confirm_and_commit_messages() {
 }
 
 #[test_log::test(tokio::test)]
-async fn autobahn_buffer_early_messages() {
-    // node 4 got disconnected for a slot
-    let (mut node1, mut node2, mut node3, mut node4) = build_nodes!(4).await;
+async fn leader_receives_commit_for_next_slot() {
+    let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
 
     ConsensusTestCtx::setup_for_round(
         &mut [
+            &mut node0.consensus_ctx,
             &mut node1.consensus_ctx,
             &mut node2.consensus_ctx,
             &mut node3.consensus_ctx,
-            &mut node4.consensus_ctx,
         ],
-        0,
         5,
         0,
     );
 
-    // Slot 5 starts, all nodes receive the prepare
-    node1
+    node0
         .start_round_with_cut_from_mempool(TimestampMs(1000))
         .await;
 
     broadcast! {
         description: "Prepare",
-        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx, node4.consensus_ctx],
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
         message_matches: ConsensusNetMessage::Prepare(..)
     };
 
     send! {
         description: "PrepareVote",
-        from: [node2.consensus_ctx, node3.consensus_ctx, node4.consensus_ctx], to: node1.consensus_ctx,
-        message_matches: ConsensusNetMessage::PrepareVote(_)
-    };
-
-    broadcast! {
-        description: "Confirm - Node4 disconnected",
-        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx],
-        message_matches: ConsensusNetMessage::Confirm(..)
-    };
-
-    send! {
-        description: "ConfirmAck",
-        from: [node2.consensus_ctx, node3.consensus_ctx], to: node1.consensus_ctx,
-        message_matches: ConsensusNetMessage::ConfirmAck(_)
-    };
-
-    broadcast! {
-        description: "Commit - Node4 still disconnected",
-        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx],
-        message_matches: ConsensusNetMessage::Commit(..)
-    };
-
-    // Slot 4 starts with new leader with node4 disconnected
-    node2
-        .start_round_with_cut_from_mempool(TimestampMs(2000))
-        .await;
-
-    broadcast! {
-        description: "Prepare",
-        from: node2.consensus_ctx, to: [node1.consensus_ctx, node3.consensus_ctx],
-        message_matches: ConsensusNetMessage::Prepare(..)
-    };
-
-    send! {
-        description: "PrepareVote",
-        from: [node1.consensus_ctx, node3.consensus_ctx], to: node2.consensus_ctx,
+        from: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx], to: node0.consensus_ctx,
         message_matches: ConsensusNetMessage::PrepareVote(_)
     };
 
     broadcast! {
         description: "Confirm",
-        from: node2.consensus_ctx, to: [node1.consensus_ctx, node3.consensus_ctx],
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
         message_matches: ConsensusNetMessage::Confirm(..)
     };
 
     send! {
         description: "ConfirmAck",
-        from: [node1.consensus_ctx, node3.consensus_ctx], to: node2.consensus_ctx,
+        from: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx], to: node0.consensus_ctx,
         message_matches: ConsensusNetMessage::ConfirmAck(_)
     };
 
-    broadcast! {
+    let commit_msg = broadcast! {
         description: "Commit",
-        from: node2.consensus_ctx, to: [node1.consensus_ctx, node3.consensus_ctx],
+        from: node0.consensus_ctx, to: [],
         message_matches: ConsensusNetMessage::Commit(..)
     };
 
-    // Slot 5 starts with new leader but node4 is back online
-    node3
-        .start_round_with_cut_from_mempool(TimestampMs(3000))
+    ConsensusTestCtx::timeout(&mut [
+        &mut node1.consensus_ctx,
+        &mut node2.consensus_ctx,
+        &mut node3.consensus_ctx,
+    ])
+    .await;
+
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node2.consensus_ctx, to: [node1.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node3.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+
+    // Node1 is next leader (slot 5 + view 1 = 6 % 4 = 1)
+    node1
+        .start_round_with_cut_from_mempool(TimestampMs(2000))
         .await;
 
     broadcast! {
-        description: "Prepare",
-        from: node3.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node4.consensus_ctx],
+        description: "Leader - Prepare (view 1)",
+        from: node1.consensus_ctx, to: [node0.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
         message_matches: ConsensusNetMessage::Prepare(..)
-    };
-
-    send! {
-        description: "PrepareVote",
-        from: [node1.consensus_ctx, node2.consensus_ctx], to: node3.consensus_ctx,
-        message_matches: ConsensusNetMessage::PrepareVote(_)
-    };
-
-    let confirm = node3.consensus_ctx.assert_broadcast("Confirm").await;
-
-    send! {
-        description: "SyncRequest - Node4 ask for missed proposal Slot 4",
-        from: [node4.consensus_ctx], to: node3.consensus_ctx,
-        message_matches: ConsensusNetMessage::SyncRequest(_)
-    };
-
-    send! {
-        description: "SyncReply - Node 3 replies with proposal Slot 4",
-        from: [node3.consensus_ctx], to: node4.consensus_ctx,
-        message_matches: ConsensusNetMessage::SyncReply(_)
-    };
-
-    send! {
-        description: "PrepareVote - Node4 votes on slot 5",
-        from: [node4.consensus_ctx], to: node3.consensus_ctx,
-        message_matches: ConsensusNetMessage::PrepareVote(_)
     };
 
     node1
         .consensus_ctx
-        .handle_msg(
-            &confirm,
-            "[handling broadcast message from: node3 at: node1] Confirm",
-        )
-        .await;
-    node2
-        .consensus_ctx
-        .handle_msg(
-            &confirm,
-            "[handling broadcast message from: node3 at: node2] Confirm",
-        )
-        .await;
-    node4
-        .consensus_ctx
-        .handle_msg(
-            &confirm,
-            "[handling broadcast message from: node3 at: node4] Confirm",
-        )
+        .handle_msg(&commit_msg, "Leader receives commit for next slot")
         .await;
 
-    send! {
-        description: "ConfirmAck",
-        from: [node1.consensus_ctx, node2.consensus_ctx, node4.consensus_ctx], to: node3.consensus_ctx,
-        message_matches: ConsensusNetMessage::ConfirmAck(_)
-    };
-
-    broadcast! {
-        description: "Commit",
-        from: node3.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node4.consensus_ctx],
-        message_matches: ConsensusNetMessage::Commit(..)
-    };
-
-    // Slot 6 starts with node4 as leader
-    node4
-        .start_round_with_cut_from_mempool(TimestampMs(4000))
-        .await;
-
-    broadcast! {
-        description: "Prepare",
-        from: node4.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
-        message_matches: ConsensusNetMessage::Prepare(..)
-    };
+    assert_eq!(node1.consensus_ctx.slot(), 6);
+    assert_eq!(node1.consensus_ctx.view(), 0);
+    assert!(node1.consensus_ctx.current_proposal().is_none());
 }
 
 #[test_log::test(tokio::test)]
@@ -1661,7 +1640,6 @@ async fn autobahn_got_timed_out_during_sync() {
             &mut node2.consensus_ctx,
             &mut node3.consensus_ctx,
         ],
-        0,
         5,
         0,
     );
@@ -1844,6 +1822,85 @@ async fn autobahn_got_timed_out_during_sync() {
 }
 
 #[test_log::test(tokio::test)]
+async fn autobahn_timeout_split_views_no_tc() {
+    let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
+
+    ConsensusTestCtx::setup_for_round(
+        &mut [
+            &mut node0.consensus_ctx,
+            &mut node1.consensus_ctx,
+            &mut node2.consensus_ctx,
+            &mut node3.consensus_ctx,
+        ],
+        5,
+        0,
+    );
+
+    ConsensusTestCtx::timeout(&mut [
+        &mut node0.consensus_ctx,
+        &mut node1.consensus_ctx,
+        &mut node2.consensus_ctx,
+        &mut node3.consensus_ctx,
+    ])
+    .await;
+
+    broadcast! {
+        description: "Timeout v0 -> node2/node3",
+        from: node0.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Timeout v0 -> node2/node3",
+        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Timeout v0 -> dropped",
+        from: node2.consensus_ctx, to: [],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Timeout v0 -> dropped",
+        from: node3.consensus_ctx, to: [],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+
+    broadcast! {
+        description: "Timeout Certificate node2",
+        from: node2.consensus_ctx, to: [],
+        message_matches: ConsensusNetMessage::TimeoutCertificate(..)
+    };
+    broadcast! {
+        description: "Timeout Certificate node3",
+        from: node3.consensus_ctx, to: [],
+        message_matches: ConsensusNetMessage::TimeoutCertificate(..)
+    };
+
+    node0.consensus_ctx.assert_no_broadcast("No TC from node0");
+    node1.consensus_ctx.assert_no_broadcast("No TC from node1");
+
+    ConsensusTestCtx::timeout(&mut [&mut node0.consensus_ctx]).await;
+
+    broadcast! {
+        description: "Timeout v0 to node2",
+        from: node0.consensus_ctx, to: [node2.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout((signed_slot_view, _)) => {
+            assert_eq!(signed_slot_view.msg.1, 0);
+        }
+    };
+
+    send! {
+        description: "TimeoutCertificate reply to old view",
+        from: [
+            node2.consensus_ctx; ConsensusNetMessage::TimeoutCertificate(_, _, slot, view) => {
+                assert_eq!(*slot, 5);
+                assert_eq!(*view, 0);
+            }
+        ], to: node0.consensus_ctx
+    };
+}
+
+#[test_log::test(tokio::test)]
 async fn autobahn_commit_different_views_for_f() {
     let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
 
@@ -1854,7 +1911,6 @@ async fn autobahn_commit_different_views_for_f() {
             &mut node2.consensus_ctx,
             &mut node3.consensus_ctx,
         ],
-        0,
         5,
         0,
     );
@@ -1968,7 +2024,6 @@ async fn autobahn_commit_different_views_for_fplusone() {
             &mut node2.consensus_ctx,
             &mut node3.consensus_ctx,
         ],
-        0,
         5,
         0,
     );
@@ -2046,7 +2101,6 @@ async fn autobahn_commit_byzantine_across_views_attempts() {
             &mut node2.consensus_ctx,
             &mut node3.consensus_ctx,
         ],
-        0,
         5,
         0,
     );
@@ -2168,7 +2222,6 @@ async fn autobahn_commit_prepare_qc_across_multiple_views() {
             &mut node2.consensus_ctx,
             &mut node3.consensus_ctx,
         ],
-        0,
         5,
         0,
     );
@@ -2297,6 +2350,99 @@ async fn autobahn_commit_prepare_qc_across_multiple_views() {
 }
 
 #[test_log::test(tokio::test)]
+async fn autobahn_same_view_timeout_first_nil_then_prepare_qc_should_not_vote() {
+    let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
+
+    ConsensusTestCtx::setup_for_round(
+        &mut [
+            &mut node0.consensus_ctx,
+            &mut node1.consensus_ctx,
+            &mut node2.consensus_ctx,
+            &mut node3.consensus_ctx,
+        ],
+        5,
+        0,
+    );
+
+    node0
+        .start_round_with_cut_from_mempool(TimestampMs(1000))
+        .await;
+
+    broadcast! {
+        description: "Prepare reaches everyone",
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Prepare(..)
+    };
+
+    send! {
+        description: "PrepareVote",
+        from: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx], to: node0.consensus_ctx,
+        message_matches: ConsensusNetMessage::PrepareVote(_)
+    };
+
+    ConsensusTestCtx::timeout(&mut [&mut node2.consensus_ctx]).await;
+
+    broadcast! {
+        description: "node2 first timeout in view0 is nil",
+        from: node2.consensus_ctx, to: [],
+        message_matches: ConsensusNetMessage::Timeout((signed_timeout, TimeoutKind::NilProposal(_))) => {
+            assert_eq!(signed_timeout.msg.0, 5);
+            assert_eq!(signed_timeout.msg.1, 0);
+        }
+    };
+
+    broadcast! {
+        description: "Confirm reaches everyone after node2 already timed out once",
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Confirm(..)
+    };
+
+    let confirm_ack_1 = node1
+        .consensus_ctx
+        .assert_send(
+            &node0.consensus_ctx.validator_pubkey(),
+            "ConfirmAck from node1",
+        )
+        .await;
+    node2
+        .consensus_ctx
+        .assert_no_broadcast("node2 should not emit messages after timing out in the same view");
+    let confirm_ack_3 = node3
+        .consensus_ctx
+        .assert_send(
+            &node0.consensus_ctx.validator_pubkey(),
+            "ConfirmAck from node3",
+        )
+        .await;
+    node0
+        .consensus_ctx
+        .handle_msg(&confirm_ack_1, "Handle ConfirmAck from node1")
+        .await;
+    node0
+        .consensus_ctx
+        .handle_msg(&confirm_ack_3, "Handle ConfirmAck from node3")
+        .await;
+
+    ConsensusTestCtx::timeout(&mut [&mut node2.consensus_ctx]).await;
+
+    broadcast! {
+        description: "node2 second timeout stays in view0 and carries prepare qc",
+        from: node2.consensus_ctx, to: [],
+        message_matches: ConsensusNetMessage::Timeout((signed_timeout, TimeoutKind::PrepareQC((_, cp)))) => {
+            assert_eq!(signed_timeout.msg.0, 5);
+            assert_eq!(signed_timeout.msg.1, 0);
+            assert_eq!(cp.slot, 5);
+        }
+    };
+
+    broadcast! {
+        description: "Commit still happens",
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Commit(..)
+    };
+}
+
+#[test_log::test(tokio::test)]
 async fn follower_commits_cut_then_mempool_sends_stale_lane() {
     // This test checks the following case:
     // - Node1 gets a 2 DPs on its lane
@@ -2330,12 +2476,12 @@ async fn follower_commits_cut_then_mempool_sends_stale_lane() {
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: MempoolNetMessage::DataProposal(..)
     };
     node2.mempool_ctx.handle_processed_data_proposals().await;
-    send! {
+    broadcast! {
         description: "Disseminated Tx Vote",
-        from: [node2.mempool_ctx], to: node1.mempool_ctx,
+        from: node2.mempool_ctx, to: [node1.mempool_ctx],
         message_matches: MempoolNetMessage::DataVote(..)
     };
 
@@ -2372,10 +2518,10 @@ async fn follower_commits_cut_then_mempool_sends_stale_lane() {
         CutDisplay(&cp.cut).to_string(),
         format!(
             "{}:{}({} B), {}:{}({} B),",
-            LaneId(node1.consensus_ctx.validator_pubkey()),
+            LaneId::new(node1.consensus_ctx.validator_pubkey()),
             dp1b.hashed(),
             dp.estimate_size() + dp1b.estimate_size(),
-            LaneId(node2.consensus_ctx.validator_pubkey()),
+            LaneId::new(node2.consensus_ctx.validator_pubkey()),
             dp2.hashed(),
             dp2.estimate_size(),
         )

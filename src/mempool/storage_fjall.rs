@@ -1,17 +1,21 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock, RwLock},
+};
 
 use anyhow::{bail, Result};
 use async_stream::try_stream;
-use fjall::{
-    Config, Keyspace, KvSeparationOptions, PartitionCreateOptions, PartitionHandle, Slice,
-};
+use fjall::{Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, Slice};
 use futures::Stream;
-use hyli_model::LaneId;
-use tracing::info;
+use hyli_model::{LaneId, ProofData};
+use hyli_modules::utils::fjall_metrics::FjallMetrics;
+use std::time::Instant;
+use tracing::{info, warn};
 
 use crate::{
     mempool::storage::MetadataOrMissingHash,
-    model::{DataProposal, DataProposalHash, Hashed},
+    model::{DataProposal, DataProposalHash, Hashed, PoDA},
 };
 use hyli_modules::log_warn;
 
@@ -24,77 +28,205 @@ pub use hyli_model::LaneBytesSize;
 
 #[derive(Clone)]
 pub struct LanesStorage {
-    pub lanes_tip: BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>,
-    db: Keyspace,
-    pub by_hash_metadata: PartitionHandle,
-    pub by_hash_data: PartitionHandle,
+    lanes_tip: Arc<RwLock<BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>>>,
+    db: Database,
+    by_hash_metadata: Keyspace,
+    by_hash_data: Keyspace,
+    dp_proofs: Keyspace,
+    metrics: FjallMetrics,
+    // Used by the shared storage to know when it can drop this handle.
+    ref_token: Arc<()>,
+}
+
+static SHARED_LANES: OnceLock<Mutex<HashMap<PathBuf, LanesStorage>>> = OnceLock::new();
+
+/// Shared handle between mempool (read/write) and dissemination (read-only),
+/// keyed by `config.data_dir` to allow multiple nodes in one process.
+pub fn shared_lanes_storage(path: &Path) -> Result<LanesStorage> {
+    let registry = SHARED_LANES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    if let Some(existing) = guard.get(path) {
+        tracing::debug!(
+            "Reusing existing shared lanes storage at {}",
+            path.to_string_lossy()
+        );
+        return Ok(existing.clone());
+    }
+
+    // Drop cached storages that are only held by this map (ref_count == 1).
+    // This allowes closing opened files and avoid breaking OS limits during tests.
+    guard.retain(|_, storage| storage.ref_count() > 1);
+
+    tracing::debug!(
+        "Creating new shared lanes storage at {}",
+        path.to_string_lossy()
+    );
+
+    let lanes_tip = load_lanes_tip(path);
+    let storage = LanesStorage::new(path, lanes_tip)?;
+    guard.insert(path.to_path_buf(), storage.clone());
+    Ok(storage)
+}
+
+fn load_lanes_tip(path: &Path) -> BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)> {
+    let file = path.join("mempool_lanes_tip.bin");
+    match std::fs::File::open(&file) {
+        Ok(mut reader) => match borsh::from_reader(&mut reader) {
+            Ok(data) => {
+                info!("Loaded data from disk {}", file.to_string_lossy());
+                data
+            }
+            Err(err) => {
+                warn!(
+                    "Failed to load lanes tip from {}: {}",
+                    file.to_string_lossy(),
+                    err
+                );
+                BTreeMap::default()
+            }
+        },
+        Err(_) => {
+            info!(
+                "File {} not found for lanes tip (using default)",
+                file.to_string_lossy()
+            );
+            BTreeMap::default()
+        }
+    }
 }
 
 impl LanesStorage {
-    /// Create another set of handles, without the data stored in lanes_tip, to have access and methods to access mempool storage
+    fn ref_count(&self) -> usize {
+        Arc::strong_count(&self.ref_token)
+    }
+
+    /// Create another set of handles to share the same storage and lane tip view.
     pub fn new_handle(&self) -> LanesStorage {
-        LanesStorage {
-            lanes_tip: Default::default(),
-            db: self.db.clone(),
-            by_hash_metadata: self.by_hash_metadata.clone(),
-            by_hash_data: self.by_hash_data.clone(),
-        }
+        self.clone()
+    }
+
+    pub fn lane_tips_snapshot(&self) -> BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)> {
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        let guard = self.lanes_tip.read().unwrap();
+        guard.clone()
+    }
+
+    pub fn lane_tips_read(
+        &self,
+    ) -> std::sync::RwLockReadGuard<'_, BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>> {
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        self.lanes_tip.read().unwrap()
+    }
+
+    pub fn record_metrics(&self) {
+        self.metrics.record_db(&self.db);
+        self.metrics
+            .record_keyspace("dp_metadata", &self.by_hash_metadata);
+        self.metrics.record_keyspace("dp_data", &self.by_hash_data);
+        self.metrics.record_keyspace("dp_proofs", &self.dp_proofs);
     }
 
     pub fn new(
         path: &Path,
         lanes_tip: BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>,
     ) -> Result<Self> {
-        let db = Config::new(path)
+        let db = Database::builder(path)
             .cache_size(256 * 1024 * 1024)
             .max_journaling_size(512 * 1024 * 1024)
-            .max_write_buffer_size(512 * 1024 * 1024)
             .open()?;
 
-        let by_hash_metadata = db.open_partition(
-            "dp_metadata",
-            PartitionCreateOptions::default()
-                .with_kv_separation(
+        let by_hash_metadata = db.keyspace("dp_metadata", || {
+            KeyspaceCreateOptions::default()
+                .with_kv_separation(Some(
                     KvSeparationOptions::default().file_target_size(256 * 1024 * 1024),
-                )
-                .block_size(32 * 1024)
+                ))
                 .manual_journal_persist(true)
-                .max_memtable_size(128 * 1024 * 1024),
-        )?;
+                .max_memtable_size(128 * 1024 * 1024)
+        })?;
 
-        let by_hash_data = db.open_partition(
-            "dp_data",
-            PartitionCreateOptions::default()
-                .with_kv_separation(
+        let by_hash_data = db.keyspace("dp_data", || {
+            KeyspaceCreateOptions::default()
+                .with_kv_separation(Some(
                     KvSeparationOptions::default().file_target_size(256 * 1024 * 1024),
-                )
-                .block_size(32 * 1024)
+                ))
                 .manual_journal_persist(true)
-                .max_memtable_size(128 * 1024 * 1024),
-        )?;
+                .max_memtable_size(128 * 1024 * 1024)
+        })?;
+
+        let dp_proofs = db.keyspace("dp_proofs", || {
+            KeyspaceCreateOptions::default()
+                .with_kv_separation(Some(
+                    KvSeparationOptions::default().file_target_size(256 * 1024 * 1024),
+                ))
+                .manual_journal_persist(true)
+                .max_memtable_size(64 * 1024 * 1024)
+        })?;
 
         info!("{} DP(s) available", by_hash_metadata.len()?);
 
         Ok(LanesStorage {
-            lanes_tip,
+            lanes_tip: Arc::new(RwLock::new(lanes_tip)),
             db,
             by_hash_metadata,
             by_hash_data,
+            dp_proofs,
+            metrics: FjallMetrics::global("mempool", "unknown", "mempool"),
+            ref_token: Arc::new(()),
         })
+    }
+
+    pub fn set_metrics_context(&mut self, node_id: impl Into<String>) {
+        self.metrics = FjallMetrics::global("mempool", node_id, "mempool");
+    }
+
+    #[cfg(test)]
+    pub fn put_metadata_only(
+        &mut self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+        metadata: LaneEntryMetadata,
+    ) -> Result<()> {
+        let start = Instant::now();
+        let res = self
+            .by_hash_metadata
+            .insert(format!("{lane_id}:{dp_hash}"), borsh::to_vec(&metadata)?)
+            .map_err(Into::into);
+        self.metrics.record_op(
+            "put_metadata_only",
+            "dp_metadata",
+            start.elapsed().as_micros() as u64,
+        );
+        res
     }
 }
 
 impl Storage for LanesStorage {
     fn persist(&self) -> Result<()> {
-        self.db
+        let start = Instant::now();
+        let res = self
+            .db
             .persist(fjall::PersistMode::Buffer)
-            .map_err(Into::into)
+            .map_err(Into::into);
+        self.metrics
+            .record_op("persist", "db", start.elapsed().as_micros() as u64);
+        res
     }
 
     fn contains(&self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> bool {
-        self.by_hash_metadata
+        let start = Instant::now();
+        let res = self
+            .by_hash_metadata
             .contains_key(format!("{lane_id}:{dp_hash}"))
-            .unwrap_or(false)
+            .unwrap_or(false);
+        self.metrics.record_op(
+            "contains",
+            "dp_metadata",
+            start.elapsed().as_micros() as u64,
+        );
+        res
     }
 
     fn get_metadata_by_hash(
@@ -102,13 +234,20 @@ impl Storage for LanesStorage {
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
     ) -> Result<Option<LaneEntryMetadata>> {
+        let start = Instant::now();
         let item = log_warn!(
             self.by_hash_metadata.get(format!("{lane_id}:{dp_hash}")),
             "Can't find DP metadata {} for validator {}",
             dp_hash,
             lane_id
         )?;
-        item.map(decode_metadata_from_item).transpose()
+        let res = item.map(decode_metadata_from_item).transpose();
+        self.metrics.record_op(
+            "get_metadata_by_hash",
+            "dp_metadata",
+            start.elapsed().as_micros() as u64,
+        );
+        res
     }
 
     fn get_dp_by_hash(
@@ -116,46 +255,98 @@ impl Storage for LanesStorage {
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
     ) -> Result<Option<DataProposal>> {
+        let start = Instant::now();
         let item = log_warn!(
             self.by_hash_data.get(format!("{lane_id}:{dp_hash}")),
             "Can't find DP data {} for validator {}",
             dp_hash,
             lane_id
         )?;
-        item.map(|s| {
-            decode_data_proposal_from_item(s).map(|mut dp| {
-                // SAFETY: we trust our own fjall storage
-                unsafe {
-                    dp.unsafe_set_hash(dp_hash);
-                }
-                dp
+        let res = item
+            .map(|s| {
+                decode_data_proposal_from_item(s).map(|mut dp| {
+                    // SAFETY: we trust our own fjall storage
+                    unsafe {
+                        dp.unsafe_set_hash(dp_hash);
+                    }
+                    dp
+                })
             })
-        })
-        .transpose()
+            .transpose();
+        self.metrics.record_op(
+            "get_dp_by_hash",
+            "dp_data",
+            start.elapsed().as_micros() as u64,
+        );
+        res
     }
 
-    fn pop(
+    fn get_proofs_by_hash(
+        &self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+    ) -> Result<Option<Vec<(u64, ProofData)>>> {
+        let start = Instant::now();
+        let item = log_warn!(
+            self.dp_proofs.get(format!("{lane_id}:{dp_hash}")),
+            "Can't find DP proofs {} for validator {}",
+            dp_hash,
+            lane_id
+        )?;
+        let res = item
+            .map(|s| borsh::from_slice(&s).map_err(Into::into))
+            .transpose();
+        self.metrics.record_op(
+            "get_proofs_by_hash",
+            "dp_proofs",
+            start.elapsed().as_micros() as u64,
+        );
+        res
+    }
+
+    fn delete_proofs(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> Result<()> {
+        let start = Instant::now();
+        self.dp_proofs.remove(format!("{lane_id}:{dp_hash}"))?;
+        // NOTE: Garbage collection is now automatic in fjall 3.0
+        self.metrics.record_op(
+            "delete_proofs",
+            "dp_proofs",
+            start.elapsed().as_micros() as u64,
+        );
+        Ok(())
+    }
+
+    fn remove_by_hash(
         &mut self,
-        lane_id: LaneId,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
     ) -> Result<Option<(DataProposalHash, (LaneEntryMetadata, DataProposal))>> {
-        if let Some((lane_hash_tip, _)) = self.lanes_tip.get(&lane_id).cloned() {
-            if let Some(lane_entry) = self.get_metadata_by_hash(&lane_id, &lane_hash_tip)? {
-                self.by_hash_metadata
-                    .remove(format!("{lane_id}:{lane_hash_tip}"))?;
-                // Check if have the data locally after regardless - if we don't, print an error but delete metadata anyways for consistency.
-                let Some(dp) = self.get_dp_by_hash(&lane_id, &lane_hash_tip)? else {
-                    bail!(
-                        "Can't find DP data {} for lane {} where metadata could be found",
-                        lane_hash_tip,
-                        lane_id
-                    );
-                };
-                self.by_hash_data
-                    .remove(format!("{lane_id}:{lane_hash_tip}"))?;
-                self.update_lane_tip(lane_id, lane_hash_tip.clone(), lane_entry.cumul_size);
-                return Ok(Some((lane_hash_tip, (lane_entry, dp))));
-            }
+        let start = Instant::now();
+        if let Some(lane_entry) = self.get_metadata_by_hash(lane_id, dp_hash)? {
+            self.by_hash_metadata
+                .remove(format!("{lane_id}:{dp_hash}"))?;
+            // Check if have the data locally after regardless - if we don't, print an error but delete metadata anyways for consistency.
+            let Some(dp) = self.get_dp_by_hash(lane_id, dp_hash)? else {
+                bail!(
+                    "Can't find DP data {} for lane {} where metadata could be found",
+                    dp_hash,
+                    lane_id
+                );
+            };
+            self.by_hash_data.remove(format!("{lane_id}:{dp_hash}"))?;
+            self.dp_proofs.remove(format!("{lane_id}:{dp_hash}"))?;
+            self.metrics.record_op(
+                "remove_by_hash",
+                "dp_metadata",
+                start.elapsed().as_micros() as u64,
+            );
+            return Ok(Some((dp_hash.clone(), (lane_entry, dp))));
         }
+        self.metrics.record_op(
+            "remove_by_hash",
+            "dp_metadata",
+            start.elapsed().as_micros() as u64,
+        );
         Ok(None)
     }
 
@@ -164,16 +355,27 @@ impl Storage for LanesStorage {
         lane_id: LaneId,
         (lane_entry, data_proposal): (LaneEntryMetadata, DataProposal),
     ) -> Result<()> {
+        let start = Instant::now();
         let dp_hash = data_proposal.hashed();
-        self.by_hash_metadata.insert(
-            format!("{lane_id}:{dp_hash}"),
-            encode_metadata_to_item(lane_entry)?,
-        )?;
-        self.by_hash_data.insert(
-            format!("{lane_id}:{dp_hash}"),
-            encode_data_proposal_to_item(data_proposal)?,
-        )?;
-        Ok(())
+        let mut dp_to_store = data_proposal;
+        // Save full proofs separately and strip them from the stored DataProposal
+        let proofs = dp_to_store.take_proofs();
+        let key = format!("{lane_id}:{dp_hash}");
+        let metadata = encode_metadata_to_item(lane_entry)?;
+        let data = encode_data_proposal_to_item(dp_to_store)?;
+        let proofs = Slice::from(borsh::to_vec(&proofs)?);
+
+        let mut batch = self.db.batch();
+        batch.insert(&self.by_hash_metadata, key.clone(), metadata);
+        batch.insert(&self.by_hash_data, key.clone(), data);
+        batch.insert(&self.dp_proofs, key, proofs);
+        let res = batch.commit().map_err(Into::into);
+        self.metrics.record_op(
+            "put_no_verification",
+            "batch",
+            start.elapsed().as_micros() as u64,
+        );
+        res
     }
 
     fn add_signatures<T: IntoIterator<Item = ValidatorDAG>>(
@@ -182,6 +384,7 @@ impl Storage for LanesStorage {
         dp_hash: &DataProposalHash,
         vote_msgs: T,
     ) -> Result<Vec<ValidatorDAG>> {
+        let start = Instant::now();
         let key = format!("{lane_id}:{dp_hash}");
         let Some(mut lem) = log_warn!(
             self.by_hash_metadata.get(key.clone()),
@@ -220,19 +423,65 @@ impl Storage for LanesStorage {
         let signatures = lem.signatures.clone();
         self.by_hash_metadata
             .insert(key, encode_metadata_to_item(lem)?)?;
+        self.metrics.record_op(
+            "add_signatures",
+            "dp_metadata",
+            start.elapsed().as_micros() as u64,
+        );
         Ok(signatures)
     }
 
-    fn get_lane_ids(&self) -> impl Iterator<Item = &LaneId> {
-        self.lanes_tip.keys()
+    fn set_cached_poda(
+        &mut self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+        poda: PoDA,
+    ) -> Result<()> {
+        let start = Instant::now();
+        let key = format!("{lane_id}:{dp_hash}");
+        let Some(mut lem) = log_warn!(
+            self.by_hash_metadata.get(key.clone()),
+            "Can't find lane entry metadata {} for lane {}",
+            dp_hash,
+            lane_id
+        )?
+        .map(decode_metadata_from_item)
+        .transpose()?
+        else {
+            bail!(
+                "Can't find lane entry metadata {} for lane {}",
+                dp_hash,
+                lane_id
+            );
+        };
+
+        lem.cached_poda = Some(poda);
+        self.by_hash_metadata
+            .insert(key, encode_metadata_to_item(lem)?)?;
+        self.metrics.record_op(
+            "set_cached_poda",
+            "dp_metadata",
+            start.elapsed().as_micros() as u64,
+        );
+        Ok(())
     }
 
-    fn get_lane_hash_tip(&self, lane_id: &LaneId) -> Option<&DataProposalHash> {
-        self.lanes_tip.get(lane_id).map(|(hash, _)| hash)
+    fn get_lane_ids(&self) -> Vec<LaneId> {
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        let guard = self.lanes_tip.read().unwrap();
+        guard.keys().cloned().collect()
     }
 
-    fn get_lane_size_tip(&self, lane_id: &LaneId) -> Option<&LaneBytesSize> {
-        self.lanes_tip.get(lane_id).map(|(_, size)| size)
+    fn get_lane_hash_tip(&self, lane_id: &LaneId) -> Option<DataProposalHash> {
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        let guard = self.lanes_tip.read().unwrap();
+        guard.get(lane_id).map(|(hash, _)| hash.clone())
+    }
+
+    fn get_lane_size_tip(&self, lane_id: &LaneId) -> Option<LaneBytesSize> {
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        let guard = self.lanes_tip.read().unwrap();
+        guard.get(lane_id).map(|(_, size)| *size)
     }
 
     fn update_lane_tip(
@@ -242,7 +491,9 @@ impl Storage for LanesStorage {
         size: LaneBytesSize,
     ) -> Option<(DataProposalHash, LaneBytesSize)> {
         tracing::trace!("Updating lane tip for lane {} to {:?}", lane_id, dp_hash);
-        self.lanes_tip.insert(lane_id, (dp_hash, size))
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        let mut guard = self.lanes_tip.write().unwrap();
+        guard.insert(lane_id, (dp_hash, size))
     }
 
     fn get_entries_between_hashes(

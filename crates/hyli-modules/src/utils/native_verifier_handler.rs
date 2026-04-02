@@ -1,13 +1,16 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::transaction_builder::TxExecutorHandler;
-use hyli_verifiers::native::verify;
 use sdk::{verifiers::NativeVerifiers, StateCommitment};
+
+use crate::node_state::native_verifiers::verify;
 
 /// Convenience utility for verifying blobs for native verifiers.
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct NativeVerifierHandler;
 
 impl TxExecutorHandler for NativeVerifierHandler {
+    type Contract = NativeVerifierHandler;
+
     fn handle(&mut self, calldata: &sdk::Calldata) -> anyhow::Result<sdk::HyliOutput> {
         let Some(blob) = calldata.blobs.get(&calldata.index) else {
             return Err(anyhow::anyhow!(
@@ -33,7 +36,7 @@ impl TxExecutorHandler for NativeVerifierHandler {
         ))
     }
 
-    fn build_commitment_metadata(&self, _: &sdk::Blob) -> anyhow::Result<Vec<u8>> {
+    fn build_commitment_metadata(&self, _: &sdk::Calldata) -> anyhow::Result<Vec<u8>> {
         Ok(vec![])
     }
 

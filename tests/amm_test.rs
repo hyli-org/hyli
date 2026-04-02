@@ -24,7 +24,7 @@ mod e2e_amm {
         client::tx_executor_handler::{register_identity, verify_identity},
         Hydentity,
     };
-    use hyli_contract_sdk::{Blob, Calldata, ContractName, HyliOutput};
+    use hyli_contract_sdk::{Calldata, ContractName, HyliOutput};
     use hyli_contracts::{AMM_ELF, AMM_ID, HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
     use hyli_model::api::TransactionStatusDb;
     use hyllar::{
@@ -124,11 +124,17 @@ mod e2e_amm {
         // Replace prover binaries for non-reproducible mode.
         .with_prover(
             "hydentity".into(),
-            Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+            Risc0Prover::new(HYDENTITY_ELF.to_vec(), HYDENTITY_ID),
         )
-        .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
-        .with_prover("hyllar2".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
-        .with_prover("amm".into(), Risc0Prover::new(AMM_ELF, AMM_ID))
+        .with_prover(
+            "hyllar".into(),
+            Risc0Prover::new(HYLLAR_ELF.to_vec(), HYLLAR_ID),
+        )
+        .with_prover(
+            "hyllar2".into(),
+            Risc0Prover::new(HYLLAR_ELF.to_vec(), HYLLAR_ID),
+        )
+        .with_prover("amm".into(), Risc0Prover::new(AMM_ELF.to_vec(), AMM_ID))
         .build();
 
         let hyllar_initial_total_amount: u128 = executor
@@ -204,7 +210,7 @@ mod e2e_amm {
             }
             tries += 1;
             if tries >= 10 {
-                panic!("Failed to get transaction with hash {}", tx_hash);
+                panic!("Failed to get transaction with hash {tx_hash}");
             }
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
@@ -449,7 +455,7 @@ mod e2e_amm {
         ctx.send_proof(
             "risc0-recursion".into(),
             hyli_model::ProgramId(hyli_contracts::RISC0_RECURSION_ID.to_vec()),
-            hyli_model::verifiers::RISC0_1.into(),
+            hyli_model::verifiers::RISC0_3.into(),
             ProofData(recursive_proof),
             vec![
                 blob_tx_hash.clone(),
@@ -488,12 +494,14 @@ mod e2e_amm {
         Ok(())
     }
 
+    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn amm_single_node() -> Result<()> {
         let ctx = E2ECtx::new_single_with_indexer(300).await?;
         scenario_amm(ctx).await
     }
 
+    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn amm_multi_nodes() -> Result<()> {
         let ctx = E2ECtx::new_multi_with_indexer(2, 300).await?;

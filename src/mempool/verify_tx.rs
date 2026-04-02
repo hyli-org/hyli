@@ -1,10 +1,10 @@
 use anyhow::{bail, Context, Result};
-use hyli_model::{DataProposalHash, DataSized, LaneBytesSize, LaneId, ValidatorPublicKey};
+use hyli_model::{DataProposalHash, DataSized, LaneBytesSize, LaneId};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace, warn};
 
 use crate::{
-    mempool::{MempoolNetMessage, ProcessedDPEvent},
+    mempool::{DisseminationEvent, MempoolNetMessage, ProcessedDPEvent},
     model::{BlobProofOutput, DataProposal, Hashed, TransactionData},
 };
 
@@ -29,9 +29,8 @@ impl super::Mempool {
         lane_id: &LaneId,
         received_hash: DataProposalHash,
         data_proposal: DataProposal,
+        vote: super::ValidatorDAG,
     ) -> Result<()> {
-        let lane_id = lane_id.clone();
-
         debug!(
             "Received DataProposal {:?} (unchecked) on lane {} ({} txs)",
             received_hash,
@@ -39,7 +38,12 @@ impl super::Mempool {
             data_proposal.txs.len(),
         );
 
-        self.metrics.add_received_dp(&lane_id);
+        self.metrics.add_received_dp(lane_id);
+        self.metrics.add_consumed_data_proposal_bytes(
+            lane_id,
+            data_proposal.estimate_size() as u64,
+            "data_proposal",
+        );
 
         // Check if we have a cached response to this DP hash (we can safely trust the hash here)
         // TODO: if we are currently hashing the same DP we'll still re-hash it
@@ -64,16 +68,12 @@ impl super::Mempool {
             Some(DataProposalVerdict::Vote) => {
                 // Resend our vote
                 // First fetch the lane size, if we somehow don't have it ignore.
-                if let Ok(lane_size) = self.lanes.get_lane_size_at(&lane_id, &received_hash) {
+                if let Ok(lane_size) = self.lanes.get_lane_size_at(lane_id, &received_hash) {
                     debug!(
                         "Resending vote for DataProposal {:?} on lane {}",
                         received_hash, lane_id
                     );
-                    return self.send_vote(
-                        self.get_lane_operator(&lane_id),
-                        received_hash,
-                        lane_size,
-                    );
+                    return self.send_vote(lane_id, received_hash, lane_size);
                 }
             }
             Some(DataProposalVerdict::Wait) | None => {}
@@ -90,26 +90,31 @@ impl super::Mempool {
                     data_proposal.hashed()
                 );
             }
-            self.on_hashed_data_proposal(&lane_id, data_proposal.clone())?;
+            self.on_hashed_data_proposal(lane_id, data_proposal.clone(), vote)?;
         }
         #[cfg(not(test))]
-        self.inner.processing_dps.spawn_on(
-            async move {
-                // We must verify the hash
-                if data_proposal.hashed() != received_hash {
-                    bail!(
-                        "Received DataProposal with wrong hash: expected {:?}, got {:?}",
-                        received_hash,
-                        data_proposal.hashed()
-                    );
-                }
-                Ok(ProcessedDPEvent::OnHashedDataProposal((
-                    lane_id,
-                    data_proposal,
-                )))
-            },
-            self.inner.long_tasks_runtime.handle(),
-        );
+        {
+            let lane_id_clone = lane_id.clone();
+            let handle = self.inner.long_tasks_runtime.handle();
+            self.inner.processing_dps.spawn_on(
+                async move {
+                    // We must verify the hash
+                    if data_proposal.hashed() != received_hash {
+                        bail!(
+                            "Received DataProposal with wrong hash: expected {:?}, got {:?}",
+                            received_hash,
+                            data_proposal.hashed()
+                        );
+                    }
+                    Ok(ProcessedDPEvent::OnHashedDataProposal((
+                        lane_id_clone,
+                        data_proposal,
+                        vote,
+                    )))
+                },
+                &handle,
+            );
+        }
         Ok(())
     }
 
@@ -117,6 +122,7 @@ impl super::Mempool {
         &mut self,
         lane_id: &LaneId,
         mut data_proposal: DataProposal,
+        vote: super::ValidatorDAG,
     ) -> Result<()> {
         debug!(
             "Hashing done for DataProposal {:?} on lane {} ({} txs, {})",
@@ -144,34 +150,33 @@ impl super::Mempool {
                 // Normal case, we receive a proposal we already have the parent in store
                 trace!("Send vote for DataProposal");
                 #[allow(clippy::unwrap_used, reason = "we always have a size for Vote")]
-                self.send_vote(
-                    self.get_lane_operator(lane_id),
-                    data_proposal_hash,
-                    lane_size.unwrap(),
-                )?;
+                self.send_vote(lane_id, data_proposal_hash, lane_size.unwrap())?;
             }
             DataProposalVerdict::Process => {
                 trace!("Further processing for DataProposal");
                 let lane_id = lane_id.clone();
+                let proof_verifiers = self.proof_verifiers.clone();
+                let handle = self.inner.long_tasks_runtime.handle();
                 self.inner.processing_dps.spawn_on(
                     async move {
-                        let decision = Self::process_data_proposal(&mut data_proposal);
+                        let decision =
+                            Self::process_data_proposal(proof_verifiers, &mut data_proposal).await;
                         Ok(ProcessedDPEvent::OnProcessedDataProposal((
                             lane_id,
                             decision,
                             data_proposal,
                         )))
                     },
-                    self.inner.long_tasks_runtime.handle(),
+                    &handle,
                 );
             }
             DataProposalVerdict::Wait => {
                 debug!("Buffering DataProposal {}", data_proposal_hash);
                 // Push the data proposal in the waiting list
-                self.buffered_proposals
+                self.buffered_entries
                     .entry(lane_id.clone())
                     .or_default()
-                    .insert(data_proposal);
+                    .insert(data_proposal_hash.clone(), (vec![vote], data_proposal));
             }
             DataProposalVerdict::Refuse => {
                 debug!("Refuse vote for DataProposal {}", data_proposal.hashed());
@@ -216,45 +221,53 @@ impl super::Mempool {
                 let (hash, size) =
                     self.lanes
                         .store_data_proposal(&crypto, &lane_id, data_proposal)?;
-                self.send_vote(self.get_lane_operator(&lane_id), hash.clone(), size)?;
+                self.send_dissemination_event(DisseminationEvent::DpStored {
+                    lane_id: lane_id.clone(),
+                    data_proposal_hash: hash.clone(),
+                    cumul_size: size,
+                })?;
+                self.send_vote(&lane_id, hash.clone(), size)?;
 
-                while let Some(poda_signatures) = self
+                while let Some(vote) = self
                     .inner
-                    .buffered_podas
+                    .buffered_votes
                     .get_mut(&lane_id)
                     .and_then(|lane| lane.get_mut(&hash))
-                    .and_then(|podas_list| podas_list.pop())
+                    .and_then(|votes| votes.pop())
                 {
-                    self.on_poda_update(&lane_id, &hash, poda_signatures)
-                        .context("Processing buffered poda")?;
+                    self.on_data_vote(lane_id.clone(), vote)
+                        .context("Processing buffered vote")?;
                 }
 
                 // Check if we maybe buffered a descendant of this DP.
-                let mut dp = None;
-                if let Some(buffered_proposals) = self.buffered_proposals.get_mut(&lane_id) {
+                let mut entry = None;
+                if let Some(buffered_entries) = self.buffered_entries.get_mut(&lane_id) {
                     // Check if we have a buffered proposal that is a child of this DP
-                    let child_idx = buffered_proposals.iter().position(|dp| {
-                        if let Some(parent_hash) = &dp.parent_data_proposal_hash {
-                            parent_hash == &hash
-                        } else {
-                            false
-                        }
+                    let mut extracted = buffered_entries.extract_if(|_, (_, dp)| {
+                        dp.parent_data_proposal_hash
+                            .dp_hash()
+                            .is_some_and(|parent| parent == &hash)
                     });
-                    if let Some(child_idx) = child_idx {
-                        // We have a buffered proposal that is a child of this DP, process it.
-                        // (I _would_ use a HashSet, but this requires https://github.com/rust-lang/rust/issues/59618
-                        // which is coming in 1.88)
-                        dp = buffered_proposals.swap_remove_index(child_idx);
+                    if let Some((_, child_entry)) = extracted.next() {
+                        entry = Some(child_entry);
                     }
                 }
-                if let Some(dp) = dp {
-                    // We can process this DP
-                    debug!(
-                        "Processing buffered DataProposal {:?} on lane {}",
-                        dp.hashed(),
-                        lane_id
-                    );
-                    self.on_hashed_data_proposal(&lane_id, dp)?;
+                if let Some(mut entry) = entry {
+                    // Shouldn't really happen but let's handle it
+                    if let Some(vote) = entry.0.pop() {
+                        // We can process this DP
+                        debug!(
+                            "Processing buffered DataProposal {:?} on lane {}",
+                            entry.1.hashed(),
+                            lane_id
+                        );
+                        self.on_hashed_data_proposal(&lane_id, entry.1, vote)?;
+                    } else {
+                        warn!(
+                            "No lane operator vote stored for buffered proposal {:?}",
+                            entry.1.hashed()
+                        );
+                    }
                 }
             }
             DataProposalVerdict::Refuse => {
@@ -289,7 +302,7 @@ impl super::Mempool {
         match self.lanes.can_be_put_on_top(
             lane_id,
             &dp_hash,
-            data_proposal.parent_data_proposal_hash.as_ref(),
+            &data_proposal.parent_data_proposal_hash,
         ) {
             // PARENT UNKNOWN
             CanBePutOnTop::No => {
@@ -309,14 +322,16 @@ impl super::Mempool {
                 Ok((DataProposalVerdict::Refuse, None))
             }
             CanBePutOnTop::AlreadyOnTop => {
-                // This can happen if the lane tip is updated (via a commit) before the data proposal arrived.
-                // For performance reasons, we don't to process the data proposal
+                // Lane tip was updated (via commit) before this proposal arrived, so we ignore it.
                 Ok((DataProposalVerdict::Ignore, None))
             }
         }
     }
 
-    fn process_data_proposal(data_proposal: &mut DataProposal) -> DataProposalVerdict {
+    async fn process_data_proposal(
+        proof_verifiers: std::sync::Arc<crate::verifier_workers::ProofVerifierService>,
+        data_proposal: &mut DataProposal,
+    ) -> DataProposalVerdict {
         for tx in &data_proposal.txs {
             match &tx.transaction_data {
                 TransactionData::Blob(_) => {
@@ -343,7 +358,9 @@ impl super::Mempool {
                     let is_recursive = proof_tx.contract_name.0 == "risc0-recursion";
 
                     if is_recursive {
-                        match verify_recursive_proof(proof, verifier, program_id) {
+                        match verify_recursive_proof(&proof_verifiers, proof, verifier, program_id)
+                            .await
+                        {
                             Ok((local_program_ids, local_hyli_outputs)) => {
                                 let data_matches = local_program_ids
                                     .iter()
@@ -375,11 +392,11 @@ impl super::Mempool {
                             }
                         }
                     } else {
-                        match verify_proof(proof, verifier, program_id) {
+                        match verify_proof(&proof_verifiers, proof, verifier, program_id).await {
                             Ok(outputs) => {
                                 // TODO: we could check the blob hash here too.
                                 if outputs.len() != proof_tx.proven_blobs.len()
-                                    && std::iter::zip(outputs.iter(), proof_tx.proven_blobs.iter())
+                                    || std::iter::zip(outputs.iter(), proof_tx.proven_blobs.iter())
                                         .any(|(output, BlobProofOutput { hyli_output, .. })| {
                                             output != hyli_output
                                         })
@@ -411,17 +428,19 @@ impl super::Mempool {
 
     fn send_vote(
         &mut self,
-        validator: &ValidatorPublicKey,
+        lane_id: &LaneId,
         data_proposal_hash: DataProposalHash,
         size: LaneBytesSize,
     ) -> Result<()> {
-        self.metrics
-            .add_dp_vote(self.crypto.validator_pubkey(), validator);
-        debug!("🗳️ Sending vote for DataProposal {data_proposal_hash} to {validator} (lane size: {size})");
-        self.send_net_message(
-            validator.clone(),
-            MempoolNetMessage::DataVote(self.crypto.sign((data_proposal_hash, size))?),
-        )?;
+        self.metrics.add_dp_vote(
+            self.crypto.validator_pubkey(),
+            self.crypto.validator_pubkey(),
+        );
+        debug!("🗳️ Broadcasting vote for DataProposal {data_proposal_hash} (lane size: {size})");
+        self.send_net_message_broadcast(MempoolNetMessage::DataVote(
+            lane_id.clone(),
+            self.crypto.sign((data_proposal_hash, size))?,
+        ))?;
         Ok(())
     }
 }
@@ -437,30 +456,32 @@ pub mod test {
         p2p::network::HeaderSigner,
     };
     use hyli_crypto::BlstCrypto;
-    use hyli_model::{ContractName, DataProposalHash, SignedByValidator, Transaction};
+    use hyli_model::{
+        BlobIndex, BlobProofOutput, ContractName, DataProposalHash, HyliOutput, ProgramId,
+        ProofData, SignedByValidator, Transaction, TransactionData, VerifiedProofTransaction,
+        Verifier,
+    };
 
     #[test_log::test(tokio::test)]
     async fn test_get_verdict() {
         let mut ctx = MempoolTestCtx::new("mempool").await;
         let crypto2: BlstCrypto = BlstCrypto::new("2").unwrap();
-        let lane_id2 = &LaneId(crypto2.validator_pubkey().clone());
+        let lane_id2 = LaneId::new(crypto2.validator_pubkey().clone());
 
-        let dp = DataProposal::new(None, vec![]);
+        let dp = DataProposal::new_root(lane_id2.clone(), vec![]);
         // 2 send a DP to 1
-        let (verdict, _) = ctx.mempool.get_verdict(lane_id2, &dp).unwrap();
+        let (verdict, _) = ctx.mempool.get_verdict(&lane_id2, &dp).unwrap();
         assert_eq!(verdict, DataProposalVerdict::Empty);
 
-        let dp = DataProposal::new(None, vec![Transaction::default()]);
-        let (verdict, _) = ctx.mempool.get_verdict(lane_id2, &dp).unwrap();
+        let dp = DataProposal::new_root(lane_id2.clone(), vec![Transaction::default()]);
+        let (verdict, _) = ctx.mempool.get_verdict(&lane_id2, &dp).unwrap();
         assert_eq!(verdict, DataProposalVerdict::Process);
 
-        let dp_unknown_parent = DataProposal::new(
-            Some(DataProposalHash::default()),
-            vec![Transaction::default()],
-        );
+        let dp_unknown_parent =
+            DataProposal::new(DataProposalHash::default(), vec![Transaction::default()]);
         let (verdict, _) = ctx
             .mempool
-            .get_verdict(lane_id2, &dp_unknown_parent)
+            .get_verdict(&lane_id2, &dp_unknown_parent)
             .unwrap();
         assert_eq!(verdict, DataProposalVerdict::Wait);
     }
@@ -469,32 +490,32 @@ pub mod test {
     async fn test_get_verdict_fork() {
         let mut ctx = MempoolTestCtx::new("mempool").await;
         let crypto2: BlstCrypto = BlstCrypto::new("2").unwrap();
-        let lane_id2 = &LaneId(crypto2.validator_pubkey().clone());
+        let lane_id2 = LaneId::new(crypto2.validator_pubkey().clone());
 
-        let dp = DataProposal::new(None, vec![Transaction::default()]);
-        let dp2 = DataProposal::new(Some(dp.hashed()), vec![Transaction::default()]);
+        let dp = DataProposal::new_root(lane_id2.clone(), vec![Transaction::default()]);
+        let dp2 = DataProposal::new(dp.hashed(), vec![Transaction::default()]);
 
         ctx.mempool
             .lanes
-            .store_data_proposal(&ctx.mempool.crypto, lane_id2, dp.clone())
+            .store_data_proposal(&ctx.mempool.crypto, &lane_id2, dp.clone())
             .unwrap();
         ctx.mempool
             .lanes
-            .store_data_proposal(&ctx.mempool.crypto, lane_id2, dp2.clone())
+            .store_data_proposal(&ctx.mempool.crypto, &lane_id2, dp2.clone())
             .unwrap();
 
         assert!(ctx
             .mempool
             .lanes
-            .store_data_proposal(&ctx.mempool.crypto, lane_id2, dp2)
+            .store_data_proposal(&ctx.mempool.crypto, &lane_id2, dp2)
             .is_err());
 
         let dp2_fork = DataProposal::new(
-            Some(dp.hashed()),
+            dp.hashed(),
             vec![Transaction::default(), Transaction::default()],
         );
 
-        let (verdict, _) = ctx.mempool.get_verdict(lane_id2, &dp2_fork).unwrap();
+        let (verdict, _) = ctx.mempool.get_verdict(&lane_id2, &dp2_fork).unwrap();
         assert_eq!(verdict, DataProposalVerdict::Refuse);
     }
 
@@ -508,37 +529,88 @@ pub mod test {
         );
         let size = LaneBytesSize(data_proposal.estimate_size() as u64);
         let hash = data_proposal.hashed();
+        let lane_id = LaneId::new(ctx.mempool.crypto.validator_pubkey().clone());
 
         let signed_msg =
             ctx.mempool
                 .crypto
                 .sign_msg_with_header(MempoolNetMessage::DataProposal(
+                    lane_id,
                     hash.clone(),
                     data_proposal.clone(),
+                    ctx.mempool.crypto.sign((hash.clone(), size))?,
                 ))?;
 
         ctx.mempool
-            .handle_net_message(signed_msg, &ctx.mempool_sync_request_sender)
+            .handle_net_message(signed_msg)
             .await
             .expect("should handle net message");
 
         ctx.handle_processed_data_proposals().await;
 
         // Assert that we vote for that specific DataProposal
-        match ctx
-            .assert_send(&ctx.mempool.crypto.validator_pubkey().clone(), "DataVote")
-            .await
-            .msg
-        {
-            MempoolNetMessage::DataVote(SignedByValidator {
-                msg: (data_vote, voted_size),
-                ..
-            }) => {
+        match ctx.assert_broadcast("DataVote").await.msg {
+            MempoolNetMessage::DataVote(
+                _,
+                SignedByValidator {
+                    msg: (data_vote, voted_size),
+                    ..
+                },
+            ) => {
                 assert_eq!(data_vote, hash);
                 assert_eq!(size, voted_size);
             }
             _ => panic!("Expected DataProposal message"),
         };
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_receiving_data_proposal_rejects_mismatched_verified_proof_output() -> Result<()> {
+        let mut ctx = MempoolTestCtx::new("mempool").await;
+
+        let proof_output = HyliOutput::default();
+        let proof = ProofData(borsh::to_vec(&vec![proof_output.clone()])?);
+        let mut wrong_output = proof_output.clone();
+        wrong_output.index = BlobIndex(999);
+        let proof_hash = proof.hashed();
+
+        let tx = Transaction::from(TransactionData::VerifiedProof(VerifiedProofTransaction {
+            contract_name: ContractName::new("proof-check"),
+            program_id: ProgramId(vec![]),
+            verifier: Verifier("test".into()),
+            proof: Some(proof),
+            proof_hash: proof_hash.clone(),
+            proof_size: 0,
+            proven_blobs: vec![BlobProofOutput {
+                original_proof_hash: proof_hash,
+                blob_tx_hash: b"blob-tx".into(),
+                program_id: ProgramId(vec![]),
+                verifier: Verifier("test".into()),
+                hyli_output: wrong_output,
+            }],
+            is_recursive: false,
+        }));
+
+        let data_proposal = ctx.create_data_proposal(None, &[tx]);
+        let lane_id = LaneId::new(ctx.mempool.crypto.validator_pubkey().clone());
+
+        let vote = ctx.mempool.crypto.sign((
+            data_proposal.hashed(),
+            LaneBytesSize(data_proposal.estimate_size() as u64),
+        ))?;
+
+        ctx.mempool
+            .on_hashed_data_proposal(&lane_id, data_proposal.clone(), vote)?;
+        ctx.handle_processed_data_proposals().await;
+
+        assert_eq!(
+            ctx.mempool
+                .cached_dp_votes
+                .get(&(lane_id, data_proposal.hashed())),
+            Some(&DataProposalVerdict::Refuse)
+        );
+
         Ok(())
     }
 }

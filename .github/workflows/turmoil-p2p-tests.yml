@@ -6,20 +6,19 @@ on:
     paths:
       - "crates/hyli-net/**"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-turmoil:
-    runs-on: ubuntu-latest
-
+    runs-on: arc-runner-set
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Run turmoil P2P tests - basic
         run: cargo test -p hyli-net --features turmoil turmoil_p2p
-

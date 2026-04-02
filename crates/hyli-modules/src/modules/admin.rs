@@ -15,21 +15,23 @@ use axum::{
     routing::{get, post},
     Json,
 };
+use borsh::{BorshDeserialize, BorshSerialize};
+use hyli_model::BlockHeight;
 use hyli_net::http::HttpClient;
-use sdk::*;
 use serde::{Deserialize, Serialize};
 use std::{future::Future, path::PathBuf, pin::Pin};
 use tokio_util::sync::CancellationToken;
 use tower_http::catch_panic::CatchPanicLayer;
 use tracing::info;
 
-pub use client_sdk::contract_indexer::AppError;
 pub use client_sdk::rest_client as client;
+pub use client_sdk::AppError;
 
 use super::{
     rest::request_logger,
     signal::{self},
 };
+use crate::node_state::module::QueryBlockHeight;
 
 #[derive(Clone)]
 pub struct QueryNodeStateStore;
@@ -46,6 +48,7 @@ pub struct QueryConsensusCatchupStoreResponse(pub Vec<u8>);
 module_bus_client! {
     struct AdminBusClient {
         sender(signal::PersistModule),
+        sender(crate::bus::command_response::Query<QueryBlockHeight, BlockHeight>),
         sender(crate::bus::command_response::Query<QueryNodeStateStore, QueryNodeStateStoreResponse>),
         sender(crate::bus::command_response::Query<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse>),
     }
@@ -88,6 +91,7 @@ impl Module for AdminApi {
             Router::new()
                 .route("/v1/admin/persist", post(persist))
                 .route("/v1/admin/download/{file}", get(download))
+                .route("/v1/admin/block_height", get(block_height))
                 .route("/v1/admin/catchup", get(catchup))
                 .with_state(RouterState {
                     bus: AdminBusClient::new_from_bus(bus.new_handle()).await,
@@ -176,11 +180,9 @@ pub async fn download(
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
 pub struct CatchupStoreResponse {
-    #[serde(with = "base64_field")]
     pub node_state_store: Vec<u8>,
-    #[serde(with = "base64_field")]
     pub consensus_store: Vec<u8>,
 }
 
@@ -202,12 +204,41 @@ impl NodeAdminApiClient {
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<CatchupStoreResponse>> + Send + '_>> {
         Box::pin(async move {
-            self.client
-                .get("v1/admin/catchup")
+            let bytes = self
+                .client
+                .get_bytes("v1/admin/catchup")
                 .await
-                .context("getting catchup store to initialize the node".to_string())
+                .context("getting catchup store bytes to initialize the node".to_string())?;
+            borsh::from_slice(bytes.as_ref())
+                .context("deserializing binary catchup store response".to_string())
         })
     }
+
+    pub fn get_block_height(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<BlockHeight>> + Send + '_>> {
+        Box::pin(async move {
+            self.client
+                .get("v1/admin/block_height")
+                .await
+                .context("getting block height from admin api".to_string())
+        })
+    }
+}
+
+pub async fn block_height(
+    State(mut state): State<RouterState>,
+) -> Result<impl IntoResponse, AppError> {
+    tracing::info!("Getting node block height from node state");
+    let height = log_error!(
+        state
+            .bus
+            .shutdown_aware_request::<()>(QueryBlockHeight {})
+            .await,
+        "Getting node block height"
+    )
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(height))
 }
 
 pub async fn catchup(State(mut state): State<RouterState>) -> Result<impl IntoResponse, AppError> {
@@ -241,7 +272,13 @@ pub async fn catchup(State(mut state): State<RouterState>) -> Result<impl IntoRe
         consensus_store: consensus_state,
     };
 
-    Ok(Json(catchup_response))
+    let body = borsh::to_vec(&catchup_response)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.into()))?;
+    Ok((
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/octet-stream")],
+        Bytes::from(body),
+    ))
 }
 
 pub struct RouterState {

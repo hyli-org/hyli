@@ -1,0 +1,167 @@
+-- Add migration script here
+CREATE TABLE blocks (
+    hash TEXT PRIMARY KEY,          -- Corresponds to BlockHash 
+    parent_hash TEXT NOT NULL,      -- Parent block hash (BlockHash)
+    height BIGINT NOT NULL,         -- Corresponds to BlockHeight (u64)
+    timestamp TIMESTAMP(3) NOT NULL,   -- UNIX timestamp (u64)
+    total_txs BIGINT NOT NULL,         -- Total number of transactions in the block
+    UNIQUE (height),                -- Ensure each block height is unique
+    CHECK (length(hash) = 64),      -- Ensure the hash is exactly 64
+    CHECK (height >= 0)             -- Ensure the height is positive
+);
+
+CREATE TYPE transaction_type AS ENUM ('blob_transaction', 'proof_transaction', 'stake');
+CREATE TYPE transaction_status AS ENUM ('data_proposal_created','waiting_dissemination','success', 'failure', 'sequenced', 'timed_out');
+CREATE TYPE contract_change_type AS ENUM ('registered', 'program_id_updated', 'state_updated', 'timeout_updated', 'deleted');
+
+CREATE TABLE transactions (
+    parent_dp_hash TEXT NOT NULL,                           -- Data Proposal hash
+    tx_hash TEXT NOT NULL,
+    version INT NOT NULL,
+    transaction_type transaction_type NOT NULL,      -- Field to identify the type of transaction (used for joins)
+    transaction_status transaction_status NOT NULL,  -- Field to identify the status of the transaction
+    block_hash TEXT REFERENCES blocks(hash) ON DELETE CASCADE,
+    block_height BIGINT,
+    lane_id TEXT,                           -- Lane ID
+    index INT,                              -- Index of the transaction within the block
+    settled_block_hash TEXT REFERENCES blocks(hash) ON DELETE CASCADE,
+    settled_block_height BIGINT,
+    settled_index INT,
+    identity TEXT,                          -- Identity (NULL except for blob transactions)
+    PRIMARY KEY (parent_dp_hash, tx_hash),
+    CHECK (length(tx_hash) = 64)
+);
+
+CREATE INDEX idx_transactions_lane_id ON transactions(lane_id);
+
+CREATE TABLE blobs (
+    parent_dp_hash TEXT NOT NULL,  -- Foreign key linking to the parent_dp_hash BlobTransactions
+    tx_hash TEXT NOT NULL,  -- Foreign key linking to the tx_hash BlobTransactions
+    
+    blob_index INT NOT NULL,           -- Index of the blob within the transaction
+    identity TEXT NOT NULL,            -- Identity field from the original BlobTransaction struct
+    contract_name TEXT NOT NULL,       -- Contract name associated with the blob
+    data BYTEA NOT NULL,               -- Actual blob data (stored as binary)
+    PRIMARY KEY (parent_dp_hash, tx_hash, blob_index), -- Composite primary key (parent_dp_hash + tx_hash + blob_index) to uniquely identify each blob
+    CHECK (blob_index >= 0),           -- Ensure the index is positive
+    FOREIGN KEY (parent_dp_hash, tx_hash) REFERENCES transactions(parent_dp_hash, tx_hash) ON DELETE CASCADE
+);
+create index idx_blobs_contract_name on blobs(contract_name);
+
+-- This table stores one line for each hyli output in a VerifiedProof
+CREATE TABLE blob_proof_outputs (
+    blob_parent_dp_hash  TEXT NOT NULL,         -- Foreign key linking to the BlobTransactions    
+    blob_tx_hash  TEXT NOT NULL,         -- Foreign key linking to the BlobTransactions    
+    proof_parent_dp_hash TEXT NOT NULL,
+    proof_tx_hash TEXT NOT NULL,
+    blob_index INT NOT NULL,            -- Index of the blob within the transaction
+    blob_proof_output_index INT NOT NULL, -- Index of the blob proof output within the proof
+    contract_name TEXT NOT NULL,       -- Contract name associated with the blob
+    hyli_output JSONB NOT NULL,        -- Additional metadata stored in JSONB format
+    settled BOOLEAN NOT NULL,       -- Was this blob proof output used in settlement ? 
+    PRIMARY KEY (proof_parent_dp_hash, proof_tx_hash, blob_parent_dp_hash, blob_tx_hash, blob_index, blob_proof_output_index),
+    FOREIGN KEY (blob_parent_dp_hash, blob_tx_hash, blob_index) REFERENCES blobs(parent_dp_hash, tx_hash, blob_index) ON DELETE CASCADE,
+    FOREIGN KEY (blob_tx_hash, blob_parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE,
+    FOREIGN KEY (proof_tx_hash, proof_parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE,
+    UNIQUE (blob_parent_dp_hash, blob_tx_hash, blob_index, blob_proof_output_index)
+);
+
+CREATE TABLE contracts (
+    contract_name TEXT PRIMARY KEY NOT NULL,
+    verifier TEXT NOT NULL,
+    program_id BYTEA NOT NULL,
+    soft_timeout BIGINT,
+    hard_timeout BIGINT,
+    state_commitment BYTEA NOT NULL,
+    parent_dp_hash TEXT NOT NULL,
+    tx_hash TEXT NOT NULL,
+    metadata BYTEA,
+    deleted_at_height INT,
+    FOREIGN KEY (parent_dp_hash, tx_hash) REFERENCES transactions(parent_dp_hash, tx_hash) ON DELETE CASCADE
+);
+
+CREATE TABLE contract_state (
+    contract_name TEXT NOT NULL,                                          -- Name of the contract
+    block_hash TEXT NOT NULL REFERENCES blocks(hash) ON DELETE CASCADE,   -- Block where the state is captured
+    state_commitment BYTEA NOT NULL,                                          -- The contract state stored in JSON format for flexibility
+    PRIMARY KEY (contract_name, block_hash)
+);
+
+CREATE TABLE transaction_state_events (
+    block_hash TEXT NOT NULL REFERENCES blocks(hash) ON DELETE CASCADE,
+    block_height BIGINT,
+    tx_hash TEXT NOT NULL,
+    parent_dp_hash TEXT NOT NULL,
+    event JSONB NOT NULL,
+    index INT,
+    FOREIGN KEY (tx_hash, parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE
+);
+
+
+CREATE INDEX idx_bpo_on_proof_tx
+  ON blob_proof_outputs (proof_tx_hash);
+
+
+CREATE INDEX idx_bpo_prooftx_contract
+  ON blob_proof_outputs (proof_tx_hash, contract_name);
+
+-- Fast lookup for get tx by hash & transaction pages:
+-- explorer usually filters by tx_hash (+ transaction_type) and does not have parent_dp_hash,
+-- so parent_dp_hash is kept last in the key.
+CREATE INDEX idx_tx_fast_lookup
+  ON transactions (tx_hash, transaction_type, parent_dp_hash);
+
+create table txs_contracts_sequenced (
+    parent_dp_hash TEXT NOT NULL,  -- Foreign key linking to the parent_dp_hash BlobTransactions
+    tx_hash TEXT NOT NULL,  -- Foreign key linking to the tx_hash BlobTransactions
+    contract_name TEXT NOT NULL,       -- Contract name associated with the blob
+    block_height BIGINT NOT NULL,
+    tx_index INT NOT NULL,
+    PRIMARY KEY (parent_dp_hash, tx_hash, contract_name)
+);
+create index idx_txs_contracts_sequenced_contract_cursor
+  on txs_contracts_sequenced(contract_name, block_height, tx_index)
+  include (parent_dp_hash, tx_hash);
+
+create table txs_contracts_settled (
+    parent_dp_hash TEXT NOT NULL,
+    tx_hash TEXT NOT NULL,
+    contract_name TEXT NOT NULL,
+    settled_block_hash TEXT NOT NULL REFERENCES blocks(hash) ON DELETE CASCADE,
+    settled_block_height BIGINT NOT NULL,
+    settled_index INT NOT NULL,
+    PRIMARY KEY (parent_dp_hash, tx_hash, contract_name)
+);
+create index idx_txs_contracts_settled_contract_cursor
+  on txs_contracts_settled(contract_name, settled_block_height, settled_index)
+  include (parent_dp_hash, tx_hash);
+
+-- Contract history table to track all contract changes over time
+CREATE TABLE contract_history (
+    contract_name TEXT NOT NULL,
+    block_height BIGINT NOT NULL,
+    tx_index INT NOT NULL,
+    change_type contract_change_type[] NOT NULL,
+    metadata BYTEA,
+    verifier TEXT NOT NULL,
+    program_id BYTEA NOT NULL,
+    state_commitment BYTEA NOT NULL,
+    soft_timeout BIGINT,
+    hard_timeout BIGINT,
+    deleted_at_height INT,
+    parent_dp_hash TEXT NOT NULL,
+    tx_hash TEXT NOT NULL,
+    PRIMARY KEY (contract_name, block_height, tx_index),
+    FOREIGN KEY (parent_dp_hash, tx_hash)
+        REFERENCES transactions(parent_dp_hash, tx_hash) ON DELETE CASCADE,
+    CHECK (block_height >= 0),
+    CHECK (tx_index >= 0)
+);
+
+-- Index for efficient lookups of contract state at a given point in time
+CREATE INDEX idx_contract_history_lookup
+ON contract_history(contract_name, block_height DESC, tx_index DESC);
+
+-- Index for filtering by change type (useful for explorer)
+CREATE INDEX idx_contract_history_change_type
+ON contract_history USING GIN (change_type);

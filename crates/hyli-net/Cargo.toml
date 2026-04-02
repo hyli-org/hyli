@@ -11,6 +11,9 @@ rust-version = { workspace = true }
 [dependencies]
 sdk = { workspace = true, features = ["full-model"] }
 hyli-crypto = { workspace = true }
+hyli-turmoil-shims = { workspace = true, features = ["opentelemetry"] }
+hyli-bus = { workspace = true, optional = true }
+hyli-net-traits = { workspace = true }
 
 anyhow = { workspace = true }
 borsh = { workspace = true }
@@ -26,6 +29,7 @@ hex = { workspace = true }
 paste = { workspace = true }
 serde_json = { workspace = true }
 http-body-util = { workspace = true }
+rand = { workspace = true }
 
 hyper = { workspace = true, features = ["client", "http1"] }
 hyper-util = { workspace = true }
@@ -33,12 +37,22 @@ serde = { workspace = true }
 axum = { workspace = true }
 tower-service = { workspace = true }
 opentelemetry = { workspace = true }
+tracing-opentelemetry = { workspace = true, optional = true }
 
 [dev-dependencies]
+libc = "0.2"
 rand = { workspace = true, features = ["std"] }
 seq-macro = { workspace = true }
 test-log = { workspace = true, features = ["color", "trace"] }
+opentelemetry_sdk = { workspace = true }
+hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
 
 [features]
 # default = ["turmoil"]
-turmoil = ["dep:turmoil"]
+turmoil = ["dep:turmoil", "hyli-turmoil-shims/turmoil"]
+instrumentation = ["tracing/attributes", "dep:tracing-opentelemetry"]
+bus = ["dep:hyli-bus"]
+test-utils = ["dep:libc"]
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", optional = true }

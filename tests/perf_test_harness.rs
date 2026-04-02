@@ -43,18 +43,18 @@ async fn setup_4_nodes_catchup() -> Result<()> {
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
     conf.run_fast_catchup = true;
-    conf.fast_catchup_from = format!(
+    conf.fast_catchup_peers = vec![format!(
         "http://localhost:{}",
         ctx.nodes
             .first()
             .expect("Node 0 should exist")
             .conf
             .admin_server_port
-    );
+    )];
     conf.fast_catchup_backfill = true;
     // conf.consensus.timestamp_checks = TimestampCheck::Monotonic;
 
-    let process = test_helpers::TestProcess::new("hyli", conf);
+    let process = test_helpers::TestProcess::new(assert_cmd::cargo::cargo_bin!("hyli"), conf);
 
     tracing::warn!(
         "🚀 Start the last node in catchup mode with the following command:\nhyli=$(pwd)/target/release/hyli && (cd {} && RUST_LOG=debug \"$hyli\")",
@@ -105,7 +105,10 @@ async fn custom_setup() -> Result<()> {
         for node_conf in confs.iter_mut() {
             node_conf.p2p.peers = peers.clone();
             node_conf.genesis.stakers = genesis_stakers.clone();
-            let node = test_helpers::TestProcess::new("hyli", node_conf.clone());
+            let node = test_helpers::TestProcess::new(
+                assert_cmd::cargo::cargo_bin!("hyli"),
+                node_conf.clone(),
+            );
             nodes.push(node);
         }
         nodes

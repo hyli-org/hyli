@@ -83,6 +83,15 @@ impl TransactionalZkContract for SmtTokenContract {
     }
 }
 
+pub fn verify_caller(expected: &Identity, caller: &Identity) -> Result<(), String> {
+    if expected != caller {
+        return Err(format!(
+            "Unauthorized: {expected} does not match caller {caller}"
+        ));
+    }
+    Ok(())
+}
+
 impl ZkContract for SmtTokenContract {
     fn execute(&mut self, calldata: &Calldata) -> RunResult {
         let (action, execution_ctx) = parse_calldata::<SmtTokenAction>(calldata)?;
@@ -92,18 +101,27 @@ impl ZkContract for SmtTokenContract {
                 sender,
                 recipient,
                 amount,
-            } => self.transfer(sender, recipient, amount),
+            } => {
+                verify_caller(&sender, &execution_ctx.caller)?;
+                self.transfer(sender, recipient, amount)
+            }
             SmtTokenAction::TransferFrom {
                 owner,
                 spender,
                 recipient,
                 amount,
-            } => self.transfer_from(owner, spender, recipient, amount),
+            } => {
+                verify_caller(&spender, &execution_ctx.caller)?;
+                self.transfer_from(owner, spender, recipient, amount)
+            }
             SmtTokenAction::Approve {
                 owner,
                 spender,
                 amount,
-            } => self.approve(owner, spender, amount),
+            } => {
+                verify_caller(&owner, &execution_ctx.caller)?;
+                self.approve(owner, spender, amount)
+            }
         };
 
         match output {

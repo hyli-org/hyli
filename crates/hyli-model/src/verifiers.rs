@@ -1,11 +1,14 @@
 use crate::{
     Blob, BlobData, BlobIndex, ContractAction, ContractName, Identity, ProgramId, Verifier,
 };
+use alloc::{format, string::String, vec::Vec};
 
+pub const RETH: &str = "reth";
 pub const CAIRO_M: &str = "cairo-m";
-pub const RISC0_1: &str = "risc0-1";
+pub const RISC0_3: &str = "risc0-3";
 pub const NOIR: &str = "noir";
 pub const SP1_4: &str = "sp1-4";
+pub const JOLT_0_1: &str = "jolt-0.1";
 
 #[derive(Debug, Copy, Clone)]
 pub enum NativeVerifiers {
@@ -47,6 +50,80 @@ impl From<NativeVerifiers> for Verifier {
         }
     }
 }
+
+#[cfg(feature = "full")]
+pub mod jolt {
+    use crate::ProofData;
+
+    #[derive(borsh::BorshSerialize, borsh::BorshDeserialize)]
+    pub struct JoltProofData {
+        pub input: Vec<u8>,
+        pub output: Vec<u8>,
+        pub proof: Vec<u8>,
+    }
+
+    impl TryFrom<JoltProofData> for ProofData {
+        type Error = anyhow::Error;
+
+        fn try_from(jolt_proof_data: JoltProofData) -> Result<Self, Self::Error> {
+            let data = borsh::to_vec(&jolt_proof_data)
+                .map_err(|e| anyhow::anyhow!("serializing Jolt proof data: {e}"))?;
+
+            Ok(ProofData(data))
+        }
+    }
+
+    impl TryFrom<&ProofData> for JoltProofData {
+        type Error = anyhow::Error;
+
+        fn try_from(proof_data: &ProofData) -> Result<Self, Self::Error> {
+            borsh::from_slice(&proof_data.0)
+                .map_err(|e| anyhow::anyhow!("deserializing Jolt proof data: {e}"))
+        }
+    }
+}
+
+#[cfg(feature = "full")]
+mod program_id {
+    use super::*;
+    // Reconstruct the SP1 key structure partially so we can validate without needing the dependency
+    #[derive(serde::Deserialize)]
+    #[allow(unused)]
+    struct SP1VK {
+        vk: SP1StarkVK,
+    }
+    #[derive(serde::Deserialize)]
+    #[allow(unused)]
+    struct SP1StarkVK {
+        commit: serde_json::Value,
+        pc_start: serde_json::Value,
+        initial_global_cumulative_sum: serde_json::Value,
+        chip_information: serde_json::Value,
+        chip_ordering: serde_json::Value,
+    }
+
+    pub fn validate_program_id(
+        verifier: &Verifier,
+        program_id: &ProgramId,
+    ) -> Result<(), anyhow::Error> {
+        match verifier.0.as_str() {
+            RISC0_3 => (!program_id.0.is_empty() && program_id.0.len() <= 32)
+                .then_some(())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Invalid Risc0 image ID: length must be between 1 and 32 bytes")
+                }),
+            SP1_4 => {
+                serde_json::from_slice::<SP1VK>(program_id.0.as_slice())
+                    .map_err(|e| anyhow::anyhow!("Invalid SP1 image ID: {}", e))?;
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+#[cfg(feature = "full")]
+pub use program_id::validate_program_id;
 
 /// Format of the BlobData for native contract "blst"
 #[derive(Debug, borsh::BorshSerialize, borsh::BorshDeserialize)]

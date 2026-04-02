@@ -22,6 +22,7 @@ use hyli_model::api::{
 use hyli_model::utils::TimestampMs;
 use hyli_modules::bus::BusMessage;
 use hyli_modules::log_error;
+use hyli_modules::modules::indexer::MIGRATOR;
 use hyli_modules::{
     bus::SharedMessageBus,
     module_handle_messages,
@@ -50,9 +51,10 @@ impl BusMessage for WsExplorerBlobTx {}
 #[derive(Debug, Clone)]
 pub struct WsExplorerBlobTx {
     pub tx: BlobTransaction,
-    pub tx_hash: TxHashDb,
-    pub dp_hash: DataProposalHashDb,
+    pub tx_hash: TxHash,
+    pub dp_hash: DataProposalHash,
     pub block_hash: ConsensusProposalHash,
+    pub block_height: BlockHeight,
     pub index: u32,
     pub version: u32,
     pub lane_id: Option<LaneId>,
@@ -87,8 +89,6 @@ impl Explorer {
         }
     }
 }
-
-pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/indexer/migrations");
 
 impl Module for Explorer {
     type Context = (SharedConf, SharedBuildApiCtx);
@@ -218,6 +218,7 @@ impl Explorer {
             .routes(routes!(api::get_transactions))
             .routes(routes!(api::get_transactions_by_height))
             .routes(routes!(api::get_transactions_by_contract))
+            .routes(routes!(api::get_last_settled_tx_by_contract))
             .routes(routes!(api::get_transaction_with_hash))
             .routes(routes!(api::get_transaction_events))
             .routes(routes!(api::get_blob_transactions_by_contract))
@@ -235,6 +236,7 @@ impl Explorer {
             // contract
             .routes(routes!(api::list_contracts))
             .routes(routes!(api::get_contract))
+            .routes(routes!(api::get_contract_history))
             .split_for_parts();
 
         if let Some(ctx) = ctx {
@@ -273,6 +275,7 @@ impl Explorer {
             tx_hash,
             dp_hash,
             block_hash,
+            block_height,
             index,
             version,
             lane_id,
@@ -286,9 +289,10 @@ impl Explorer {
                 .any(|blob| &blob.contract_name == contrat_name)
             {
                 let enriched_tx = TransactionWithBlobs {
-                    tx_hash: tx_hash.0.clone(),
-                    parent_dp_hash: dp_hash.0.clone(),
+                    tx_hash: tx_hash.clone(),
+                    parent_dp_hash: dp_hash.clone(),
                     block_hash: block_hash.clone(),
+                    block_height,
                     index,
                     version,
                     transaction_type: TransactionTypeDb::BlobTransaction,

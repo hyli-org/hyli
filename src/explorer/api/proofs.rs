@@ -101,15 +101,15 @@ pub async fn get_proofs_by_height(
     get,
     tag = "Indexer",
     params(
-        ("tx_hash" = String, Path, description = "Tx hash")
+        ("tx_hash" = TxHash, Path, description = "Tx hash")
     ),
     path = "/proof/hash/{tx_hash}",
     responses(
-        (status = OK, body = APITransaction)
+        (status = OK, body = APIProofDetails)
     )
 )]
 pub async fn get_proof_with_hash(
-    Path(tx_hash): Path<String>,
+    Path(tx_hash): Path<TxHash>,
     State(state): State<ExplorerApiState>,
 ) -> Result<Json<APIProofDetails>, StatusCode> {
     let transaction: Result<APIProofDetails, sqlx::Error> = log_error!(
@@ -119,6 +119,7 @@ SELECT
     t.tx_hash,
     t.parent_dp_hash,
     t.block_hash,
+    t.block_height,
     t.index,
     t.version,
     t.transaction_type,
@@ -143,7 +144,7 @@ ORDER BY b.height DESC, t.index DESC
 LIMIT 1;
 "#,
         )
-        .bind(tx_hash)
+        .bind(tx_hash.to_string())
         .fetch_optional(&state.db)
         .await
         .map(|row| {
@@ -159,15 +160,18 @@ LIMIT 1;
                 .zip(blob_tx_indexes)
                 .zip(blob_proof_output_indexes)
                 .zip(proof_outputs)
-                .map(|(((tx_hash, tx_idx), proof_idx), output)| {
-                    (tx_hash.into(), tx_idx as u32, proof_idx as u32, output)
+                .filter_map(|(((tx_hash, tx_idx), proof_idx), output)| {
+                    TxHash::from_hex(&tx_hash)
+                        .ok()
+                        .map(|tx_hash| (tx_hash, tx_idx as u32, proof_idx as u32, output))
                 })
                 .collect();
 
             Ok(APIProofDetails {
-                tx_hash: api_tx.tx_hash.0,
+                tx_hash: api_tx.tx_hash,
                 parent_dp_hash: api_tx.parent_dp_hash,
                 block_hash: api_tx.block_hash,
+                block_height: api_tx.block_height,
                 index: api_tx.index,
                 version: api_tx.version,
                 transaction_type: api_tx.transaction_type,
@@ -175,7 +179,7 @@ LIMIT 1;
                 timestamp: api_tx
                     .timestamp
                     .map(|t| TimestampMs(t.and_utc().timestamp_millis() as u128)),
-                lane_id: api_tx.lane_id.map(|l| l.0),
+                lane_id: api_tx.lane_id,
                 proof_outputs,
             })
         }),

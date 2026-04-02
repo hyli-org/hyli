@@ -1,41 +1,44 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
-use futures::{
-    stream::{SplitSink, SplitStream},
-    SinkExt, StreamExt,
-};
+use futures::stream::{SplitSink, SplitStream};
+use futures::{SinkExt, StreamExt};
 use sdk::hyli_model_utils::TimestampMs;
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-use crate::{clock::TimestampMsClock, net::TcpStream};
+use crate::{clock::TimestampMsClock, metrics::TcpClientMetrics, net::TcpStream};
 use anyhow::{bail, Result};
 use tracing::{debug, info, trace, warn};
 
-use super::{to_tcp_message, TcpMessage};
+#[cfg(feature = "turmoil")]
+use super::intercept;
+use super::{
+    decode_tcp_payload, framed_stream, to_tcp_message, FramedStream, TcpMessage, TcpMessageLabel,
+};
 
-type TcpSender = SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>;
-type TcpReceiver = SplitStream<Framed<TcpStream, LengthDelimitedCodec>>;
+type TcpSender = SplitSink<FramedStream, Bytes>;
+type TcpReceiver = SplitStream<FramedStream>;
+const UNKNOWN_MESSAGE_TYPE: &str = "unknown";
 
 #[derive(Debug)]
 pub struct TcpClient<Req, Res>
 where
     Req: BorshSerialize,
-    Res: BorshDeserialize,
+    Res: BorshDeserialize + TcpMessageLabel,
 {
     pub id: String,
     pub sender: TcpSender,
     pub receiver: TcpReceiver,
     pub last_ping: TimestampMs,
     pub socket_addr: SocketAddr,
+    pub metrics: TcpClientMetrics,
     pub _marker: std::marker::PhantomData<(Req, Res)>,
 }
 
 impl<Req, Res> TcpClient<Req, Res>
 where
     Req: BorshSerialize,
-    Res: BorshDeserialize,
+    Res: BorshDeserialize + TcpMessageLabel,
 {
     pub async fn connect<
         Id: std::fmt::Display,
@@ -55,7 +58,20 @@ where
         max_frame_length: Option<usize>,
         target: A,
     ) -> Result<TcpClient<Req, Res>> {
-        let timeout = std::time::Duration::from_secs(10);
+        Self::connect_with_opts_and_timeout(id, max_frame_length, target, Duration::from_secs(10))
+            .await
+    }
+
+    pub async fn connect_with_opts_and_timeout<
+        Id: std::fmt::Display,
+        A: crate::net::ToSocketAddrs + std::fmt::Display,
+    >(
+        id: Id,
+        max_frame_length: Option<usize>,
+        target: A,
+        timeout: Duration,
+    ) -> Result<TcpClient<Req, Res>> {
+        let id = id.to_string();
         let start = tokio::time::Instant::now();
         let tcp_stream = loop {
             debug!(
@@ -84,26 +100,54 @@ where
         let addr = tcp_stream.peer_addr()?;
         info!("TcpClient {} - Connected to data stream on {}.", id, addr);
 
-        let mut codec = LengthDelimitedCodec::new();
-        if let Some(mfl) = max_frame_length {
-            codec.set_max_frame_length(mfl);
-        }
-
-        let (sender, receiver) = Framed::new(tcp_stream, codec).split();
+        let (sender, receiver) = framed_stream(tcp_stream, max_frame_length).split();
 
         Ok(TcpClient::<Req, Res> {
-            id: id.to_string(),
+            id: id.clone(),
             sender,
             receiver,
             last_ping: TimestampMsClock::now(),
             socket_addr: addr,
+            metrics: TcpClientMetrics::global(id),
             _marker: std::marker::PhantomData,
         })
     }
 
-    pub async fn send(&mut self, msg: Req) -> Result<()> {
-        self.sender.send(to_tcp_message(&msg)?.try_into()?).await?;
-        Ok(())
+    pub async fn send(&mut self, msg: Req) -> Result<()>
+    where
+        Req: TcpMessageLabel,
+    {
+        let message_label = msg.message_label();
+        let msg_bytes: Bytes = to_tcp_message(&msg)?.try_into()?;
+        #[cfg(feature = "turmoil")]
+        let msg_bytes = match intercept::intercept_message(&msg_bytes) {
+            intercept::MessageAction::Pass => msg_bytes,
+            intercept::MessageAction::Drop => {
+                debug!("Dropping outbound TCP frame for client {}", self.id);
+                return Ok(());
+            }
+            intercept::MessageAction::Replace(corrupted) => {
+                debug!("Corrupting outbound TCP frame for client {}", self.id);
+                corrupted
+            }
+        };
+        let nb_bytes: usize = (&msg_bytes as &Bytes).len();
+        let start = std::time::Instant::now();
+        let res = self.sender.send(msg_bytes).await;
+        self.metrics
+            .message_send_time(start.elapsed().as_secs_f64(), message_label);
+        match res {
+            Ok(()) => {
+                self.metrics.message_emitted(message_label);
+                self.metrics
+                    .message_emitted_bytes(nb_bytes as u64, message_label);
+                Ok(())
+            }
+            Err(e) => {
+                self.metrics.message_send_error(message_label);
+                Err(e.into())
+            }
+        }
     }
     pub async fn ping(&mut self) -> Result<()> {
         self.sender.send(TcpMessage::Ping.try_into()?).await?;
@@ -117,9 +161,16 @@ where
                     if *bytes == *b"PING" {
                         trace!("Ping received for client {}", self.id);
                     } else {
-                        match borsh::from_slice(&bytes) {
-                            Ok(data) => return Some(data),
+                        match decode_tcp_payload::<Res>(&bytes) {
+                            Ok((_, data)) => {
+                                let message_label = data.message_label();
+                                self.metrics.message_received(message_label);
+                                self.metrics
+                                    .message_received_bytes(bytes.len() as u64, message_label);
+                                return Some(data);
+                            }
                             Err(io) => {
+                                self.metrics.message_error(UNKNOWN_MESSAGE_TYPE);
                                 warn!("Error while deserializing data: {:#}", io);
                                 return None;
                             }
@@ -129,10 +180,12 @@ where
                 None => {
                     // End of stream
                     warn!("End of stream for client {}", self.id);
+                    self.metrics.message_closed();
                     return None;
                 }
                 Some(Err(e)) => {
                     warn!("Error while streaming data from peer: {:#}", e);
+                    self.metrics.message_error(UNKNOWN_MESSAGE_TYPE);
                     return None;
                 }
             }

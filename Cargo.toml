@@ -14,11 +14,24 @@ members = [
   "crates/contract-sdk",
   "crates/hyli-loadtest",
   "crates/hyli-model",
+  "crates/hyli-net-traits",
+  "crates/hyli-net-macros",
   "crates/hyli-crypto",
+  "crates/hyli-turmoil-shims",
   "crates/hyli-verifiers",
+  "crates/verifier-worker",
+  "crates/jolt/model",
+  "crates/jolt/prover",
+  "crates/jolt/verifier-worker",
+  "crates/sp1/verifier-worker",
+  "crates/risc0/verifier-worker",
+  "crates/reth/verifier-worker",
+  "crates/hyli-bus",
   "crates/hyli-modules",
+  "crates/hyli-test-containers",
   "crates/hyli-tools",
   "crates/noir-tools",
+  "crates/hylix",
 ]
 default-members = [
   "crates/contracts",
@@ -26,6 +39,7 @@ default-members = [
   "crates/hyli-loadtest",
   "crates/hyli-model",
   "crates/hyli-crypto",
+  "crates/hyli-turmoil-shims",
   "crates/hyli-net",
   "crates/hyli-modules",
   "crates/hyli-tools",
@@ -34,110 +48,151 @@ default-members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.14.0-rc2"
+version = "0.15.0"
 edition = "2021"
 homepage = "https://hyli.org/"
 repository = "https://github.com/hyli-org/hyli/"
-rust-version = "1.88"
+rust-version = "1.94"
 license-file = "LICENSE"
 
 [workspace.dependencies]
-bonsai-runner = { version = "0.14.0-rc2", default-features = false, path = "crates/bonsai-runner", package = "hyli-bonsai-runner" }
-sdk = { version = "0.14.0-rc2", default-features = false, path = "crates/contract-sdk", package = "hyli-contract-sdk" }
-hyli-contract-sdk = { version = "0.14.0-rc2", default-features = false, path = "crates/contract-sdk", package = "hyli-contract-sdk" }
-client-sdk = { version = "0.14.0-rc2", default-features = false, path = "crates/client-sdk", package = "hyli-client-sdk" }
-hyli-net = { version = "0.14.0-rc2", default-features = false, path = "crates/hyli-net", package = "hyli-net" }
-hyli-model = { version = "0.14.0-rc2", default-features = false, path = "crates/hyli-model", package = "hyli-model" }
-hyli-crypto = { version = "0.14.0-rc2", default-features = false, path = "crates/hyli-crypto", package = "hyli-crypto" }
-hyli-verifiers = { version = "0.14.0-rc2", default-features = false, path = "crates/hyli-verifiers", package = "hyli-verifiers" }
-risc0-recursion = { version = "0.14.0-rc2", default-features = false, path = "crates/contracts/risc0-recursion", package = "hyli-risc0-recursion" }
-hydentity = { version = "0.14.0-rc2", default-features = false, path = "crates/contracts/hydentity", package = "hyli-hydentity" }
-hyllar = { version = "0.14.0-rc2", default-features = false, path = "crates/contracts/hyllar", package = "hyli-hyllar" }
-smt-token = { version = "0.14.0-rc2", default-features = false, path = "crates/contracts/smt-token", package = "hyli-smt-token" }
-staking = { version = "0.14.0-rc2", default-features = false, path = "crates/contracts/staking", package = "hyli-staking" }
-amm = { version = "0.14.0-rc2", default-features = false, path = "crates/contracts/amm", package = "hyli-amm" }
-uuid-tld = { version = "0.14.0-rc2", default-features = false, path = "crates/contracts/uuid-tld", package = "hyli-uuid-tld" }
-hyli-contracts = { version = "0.14.0-rc2", default-features = false, path = "crates/contracts", package = "hyli-contracts" }
-hyli-modules = { version = "0.14.0-rc2", default-features = false, path = "crates/hyli-modules", package = "hyli-modules" }
+bonsai-runner = { version = "0.15.0", default-features = false, path = "crates/bonsai-runner", package = "hyli-bonsai-runner" }
+sdk = { version = "0.15.0", default-features = false, path = "crates/contract-sdk", package = "hyli-contract-sdk" }
+hyli-contract-sdk = { version = "0.15.0", default-features = false, path = "crates/contract-sdk", package = "hyli-contract-sdk" }
+client-sdk = { version = "0.15.0", default-features = false, path = "crates/client-sdk", package = "hyli-client-sdk" }
+hyli-net = { version = "0.15.0", default-features = false, path = "crates/hyli-net", package = "hyli-net" }
+hyli-net-traits = { version = "0.15.0", default-features = false, path = "crates/hyli-net-traits", package = "hyli-net-traits" }
+hyli-net-macros = { version = "0.15.0", default-features = false, path = "crates/hyli-net-macros", package = "hyli-net-macros" }
+hyli-model = { version = "0.15.0", default-features = false, path = "crates/hyli-model", package = "hyli-model" }
+hyli-crypto = { version = "0.15.0", default-features = false, path = "crates/hyli-crypto", package = "hyli-crypto" }
+hyli-turmoil-shims = { version = "0.15.0", default-features = false, path = "crates/hyli-turmoil-shims", package = "hyli-turmoil-shims" }
+hyli-verifiers = { version = "0.15.0", default-features = false, path = "crates/hyli-verifiers", package = "hyli-verifiers" }
+hyli-bus = { version = "0.15.0", default-features = false, path = "crates/hyli-bus", package = "hyli-bus" }
+risc0-recursion = { version = "0.15.0", default-features = false, path = "crates/contracts/risc0-recursion", package = "hyli-risc0-recursion" }
+hydentity = { version = "0.15.0", default-features = false, path = "crates/contracts/hydentity", package = "hyli-hydentity" }
+hyllar = { version = "0.15.0", default-features = false, path = "crates/contracts/hyllar", package = "hyli-hyllar" }
+smt-token = { version = "0.15.0", default-features = false, path = "crates/contracts/smt-token", package = "hyli-smt-token" }
+staking = { version = "0.15.0", default-features = false, path = "crates/contracts/staking", package = "hyli-staking" }
+amm = { version = "0.15.0", default-features = false, path = "crates/contracts/amm", package = "hyli-amm" }
+uuid-tld = { version = "0.15.0", default-features = false, path = "crates/contracts/uuid-tld", package = "hyli-uuid-tld" }
+hyli-contracts = { version = "0.15.0", default-features = false, path = "crates/contracts", package = "hyli-contracts" }
+hyli-modules = { version = "0.15.0", default-features = false, path = "crates/hyli-modules", package = "hyli-modules" }
+hyli-test-containers = { version = "0.15.0", path = "crates/hyli-test-containers", package = "hyli-test-containers" }
+hyli-jolt-model = { version = "0.15.0", path = "crates/jolt/model", package = "hyli-jolt-model" }
+hyli-jolt-prover = { version = "0.15.0", path = "crates/jolt/prover", package = "hyli-jolt-prover" }
+hyli-reth-verifier-worker = { version = "0.15.0", path = "crates/reth/verifier-worker", package = "hyli-reth-verifier-worker" }
+
+hyli-registry = { version = "0.5.0" }
 
 # Common external dependencies
+alloy-consensus = { version = "1.1.0", default-features = false }
+alloy-eips = { version = "1.7.3", default-features = false }
+alloy-genesis = { version = "1.7.3", default-features = false }
+alloy-primitives = { version = "1.4.1", default-features = false }
+alloy-rlp = { version = "0.3.12", default-features = false }
+alloy-serde = { version = "1.2.1", default-features = false }
+alloy-trie = { version = "0.9.0", default-features = false }
 alloc-metrics = { version = "0.1.1" }
-anyhow = { version = "1.0.98" }
+anyhow = { version = "1.0.102" }
 anymap = { version = "0.12.1", default-features = false }
-assertables = { version = "9.8.2", default-features = false }
+assertables = { version = "9.8.6", default-features = false }
 axum = { version = "0.8.4" }
 base64 = { version = "0.22.1" }
 bincode = { version = "1.3.3" }
-blst = { version = "0.3.14", default-features = false }
+blst = { version = "0.3.16", default-features = false }
 bonsai-sdk = { version = "1.4.0", default-features = false }
-borsh = { version = "1.5.6" }
-boundless-market = { version = "0.10.0", default-features = false }
+borsh = { version = "1.6.0", default-features = false }
+boundless-market = { version = "1.0.0", default-features = false }
 bytemuck = { version = "1.23.1", default-features = false }
 bytes = { version = "1.10.0", default-features = false }
+alloy-signer = { version = "1.7.3", default-features = false }
+alloy-signer-local = { version = "1.0.41", default-features = false, features = [
+  "mnemonic",
+] }
 chrono = { version = "0.4", default-features = false }
-clap = { version = "4.5.44", default-features = false, features = ["derive"] }
+clap = { version = "4.5.48", default-features = false, features = ["derive"] }
 config = { version = "0.15.13", default-features = false }
+crc32fast = { version = "1.4" }
 crossterm = { version = "0.29.0" }
 dashmap = { version = "6.1.0", default-features = false }
 derive_more = { version = "2.0.1", default-features = false }
 dhat = { version = "0.3.3", default-features = false }
-fjall = { version = "2.11.1" }
-futures = { version = "0.3.31" }
-google-cloud-storage = { version = "0.24.0" }
-hex = { version = "0.4.3" }
+fjall = { version = "3.0.1", features = ["metrics"] }
+futures = { version = "0.3.32" }
+google-cloud-storage = { version = "1.8.0" }
+hex = { version = "0.4.3", default-features = false }
 http-body-util = { version = "0.1.3", default-features = false }
 hyper = { version = "1.6.0", default-features = false }
-hyper-util = { version = "0.1.15", default-features = false }
+hyper-util = { version = "0.1.18", default-features = false }
 indexmap = { version = "2.11.0", default-features = false }
+jolt-sdk = { git = "https://github.com/BertrandD/jolt", default-features = false }
 keyring = { version = "3", default-features = false }
-mockall = { version = "0.13.0", default-features = false }
+k256 = { version = "0.13", default-features = false, features = [
+  "ecdsa",
+  "arithmetic",
+] }
+mockall = { version = "0.14.0", default-features = false }
 once_cell = { version = "1.19.0", default-features = false }
 opentelemetry = { version = "0.28.0" }
 opentelemetry-prometheus = { version = "0.28.0" }
 opentelemetry_sdk = { version = "0.28.0" }
+opentelemetry-otlp = { version = "0.28.0", features = [
+  "grpc-tonic",
+  "trace",
+  "metrics",
+] }
+opentelemetry-http = { version = "0.28" }
 paste = { version = "1.0.15", default-features = false }
 prometheus = { version = "0.13.4" }
-quote = { version = "1.0.39", default-features = false }
-rand = { version = "=0.8.5" }
+quote = { version = "1.0.42", default-features = false }
+rand = { version = "=0.9.2" }
 rand_seeder = { version = "0.4.0" }
-ratatui = { version = "0.29.0", default-features = false }
+ratatui = { version = "0.30.0", default-features = false }
 readonly = { version = "0.2.12", default-features = false }
-risc0-build = { version = "=2.3", default-features = false }
-risc0-zkvm = { version = "=2.3", default-features = false }
+# When upgrading risc0, remember to update the CI installs, dockerfiles, and potentially the hyli-verifiers constant.
+risc0-build = { version = "3.0", default-features = false }
+risc0-zkvm = { version = "3.0", default-features = false }
+rustls = { version = "0.23", default-features = false }
 secp256k1 = { version = "0.31.1" }
 seq-macro = { version = "0.3.6", default-features = false }
-serde = { version = "1.0" }
+serde = { version = "1.0", default-features = false }
 serde_json = { version = "1.0.142" }
-serde_with = { version = "3.14.0" }
-sha2 = { version = "=0.10.8" }
+serde_with = { version = "3.14.1" }
+sha2 = { version = "=0.10.9", default-features = false } # Pinned because of risczero patch
 sha3 = { version = "0.10.8" }
-sp1-sdk = { version = "5.2.1", default-features = false }
-sp1-zkvm = { version = "5.2.1", default-features = false }
+sp1-sdk = { version = "5.2.2", default-features = false }
+sp1-zkvm = { version = "5.2.2", default-features = false }
 sparse-merkle-tree = { version = "0.6.1", default-features = false }
 sqlx = { version = "0.8.6" }
 strum = { version = "0.27.1" }
-strum_macros = { version = "0.27.1", default-features = false }
+strum_macros = { version = "0.28.0", default-features = false }
 syn = { version = "2.0.104" }
 tempfile = { version = "3.20.0", default-features = false }
 test-log = { version = "0.2.18", default-features = false }
-testcontainers-modules = { version = "0.12.1", default-features = false }
-tokio = { version = "1.47.1" }
+tracing-opentelemetry = "0.29.0"
+tokio = { version = "1.50.0" }
 tokio-util = { version = "0.7.16" }
-toml = { version = "0.9.5", default-features = false }
+toml = { version = "0.9.11", default-features = false }
 tower-http = { version = "0.6.5", default-features = false, features = [
   "decompression-gzip",
 ] }
 tower-service = { version = "0.3.3", default-features = false }
-tower_governor = { version = "0.7" }
+tower_governor = { version = "0.8" }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3.19", default-features = false }
-turmoil = { version = "0.6.6" }
-ureq = { version = "3.0.11", default-features = false }
+turmoil = { version = "0.7" }
+ureq = { version = "3.1.2", default-features = false }
 utoipa = { version = "5.4.0" }
 utoipa-axum = { version = "0.2.0" }
 utoipa-swagger-ui = { version = "9.0.2" }
 uuid = { version = "1.18.0", default-features = false }
-whoami = { version = "1.6.1", default-features = false }
+whoami = { version = "2.1.1", default-features = false }
+
+# Reth dependencies
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", default-features = false }
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", default-features = false }
+reth-ethereum = { git = "https://github.com/paradigmxyz/reth", default-features = false }
+reth-stateless = { git = "https://github.com/paradigmxyz/reth", default-features = false }
 
 [package]
 name = "hyli"
@@ -169,26 +224,34 @@ hyli-contract-sdk = { workspace = true, default-features = false, features = [
   "tracing",
 ] }
 staking = { workspace = true, default-features = false, features = ["client"] }
-client-sdk = { workspace = true, features = ["rest", "indexer"] }
+client-sdk = { workspace = true, features = ["rest", "csi"] }
 hyli-net = { workspace = true }
+hyli-net-traits = { workspace = true }
 hyli-model = { workspace = true, default-features = false, features = [
   "full",
   "sqlx",
 ] }
 hyli-crypto = { workspace = true }
+hyli-turmoil-shims = { workspace = true, features = ["opentelemetry"] }
 hydentity = { workspace = true, features = ["client"] }
 hyllar = { workspace = true, features = ["client"] }
 smt-token = { workspace = true, features = ["client"] }
 risc0-recursion = { workspace = true }
 hyli-verifiers = { workspace = true }
 hyli-contracts = { workspace = true }
-hyli-modules = { workspace = true }
+hyli-modules = { workspace = true, features = [
+  "db",
+  "fjall",
+  "gcs",
+  "indexer",
+] }
+hyli-bus = { workspace = true }
 
 
 anyhow = { workspace = true }
 borsh = { workspace = true, features = ["rc"] }
 chrono = { workspace = true, features = ["std", "serde"] }
-hex = { workspace = true }
+hex = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_with = { workspace = true, features = ["hex"] }
@@ -197,17 +260,13 @@ strum_macros = { workspace = true }
 tracing = { workspace = true }
 
 assertables = { workspace = true }
-axum = { workspace = true, features = ["macros"] }
+axum = { workspace = true, features = ["macros", "multipart"] }
 bytes = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 config = { workspace = true, default-features = false, features = ["toml"] }
 futures = { workspace = true }
 indexmap = { workspace = true, features = ["serde"] }
-opentelemetry = { workspace = true }
-opentelemetry-prometheus = { workspace = true }
-opentelemetry_sdk = { workspace = true }
 paste = { workspace = true }
-prometheus = { workspace = true }
 rand = { workspace = true }
 sqlx = { workspace = true, features = [
   "runtime-tokio",
@@ -223,7 +282,7 @@ dhat = { workspace = true, optional = true }
 alloc-metrics = { workspace = true, optional = true }
 utoipa = { workspace = true, features = ["axum_extras"] }
 utoipa-axum = { workspace = true }
-testcontainers-modules = { workspace = true, features = ["postgres"] }
+hyli-test-containers = { workspace = true }
 toml = { workspace = true, features = ["display"] }
 alloc-track = { git = "https://github.com/hyli-org/alloc-track", optional = true }
 
@@ -232,11 +291,24 @@ zip = "=3.0.0"
 seq-macro = "0.3.6"
 async-stream = "0.3.6"
 
+# For linux ARM cross compilation CI
+native-tls = { version = "0.2", optional = true, default-features = false, features = [
+  "vendored",
+] }
+
 [package.metadata.cargo-machete]
-ignored = ["zip", "bytes", "tokio-util"]
+ignored = ["zip", "bytes", "tokio-util", "native-tls"]
 
 [patch.crates-io]
-sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.8-risczero.0" }
+sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.9-risczero.0" }
+
+# Patches for jolt
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
 # Temporary patch for zkhash to support M31 field operations
 # This patches the HorizenLabs/poseidon2 repo to use our custom branch with M31 field support
@@ -245,6 +317,7 @@ sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.8
 zkhash = { git = "https://github.com/AntoineFONDEUR/poseidon2", branch = "poseidon2-M31", optional = true }
 
 [dev-dependencies]
+hyli-net = { workspace = true, features = ["test-utils"] }
 amm = { workspace = true, features = ["client"] }
 uuid-tld = { workspace = true, features = ["client"] }
 smt-token = { workspace = true, features = ["client", "risc0"] }
@@ -254,7 +327,10 @@ client-sdk = { workspace = true, default-features = false, features = [
 ] }
 hyli-modules = { workspace = true, default-features = false, features = [
   "test",
+  "db",
+  "otlp",
 ] }
+hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
 
 assert_cmd = "2.0.17"
 axum-test = { version = "17.2.0" }
@@ -274,13 +350,16 @@ risc0-zkvm = { workspace = true, default-features = false, features = [
 signal-child = "1.0.6"
 
 [features]
-default = ["risc0"]
+default = ["instrumentation"]
 
-turmoil = ["hyli-net/turmoil", "client-sdk/turmoil"]
+turmoil = [
+  "hyli-net/turmoil",
+  "client-sdk/turmoil",
+  "hyli-modules/turmoil",
+  "hyli-turmoil-shims/turmoil",
+]
 
 cairo-m = ["hyli-verifiers/cairo-m"]
-risc0 = ["hyli-verifiers/risc0", "client-sdk/risc0"]
-sp1 = ["hyli-verifiers/sp1", "client-sdk/sp1"]
 
 # Disable dependency keyring by default, as it requires libdbus
 keyring = ["hyli-crypto/keyring"]
@@ -289,9 +368,13 @@ dhat = ["dep:dhat"]
 monitoring = ["dep:alloc-metrics"]
 alloc-track = ["dep:alloc-track"]
 
+instrumentation = ["hyli-net/instrumentation", "hyli-modules/instrumentation"]
+
 # Activate this feature to recompile contracts locally (mostly useful for iterating on tests)
 nonreproducible = ["hyli-contracts/nonreproducible"]
-node_local_proving = ["risc0-zkvm/client"]
+
+# Exists purely to trigger for native-tls to build with vendored OpenSSL
+vendored = ["dep:native-tls"]
 
 [profile.release]
 # Turn off LTO, takes too long
@@ -305,6 +388,8 @@ strip = "none"
 
 [profile.ci]
 inherits = "dev"
+debug = 0
+lto = "off"
 incremental = false # Turn incremental off to lower artefact size
 
 # Optimize the following crates for development builds so tests are faster

@@ -49,11 +49,12 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
 
     let contract_name = ContractName::new("test1");
 
+    let lane_id = LaneId::new(node_modules.crypto.validator_pubkey().clone());
     node_client.send(GenesisEvent::GenesisBlock(SignedBlock {
         data_proposals: vec![(
-            LaneId(node_modules.crypto.validator_pubkey().clone()),
-            vec![DataProposal::new(
-                None,
+            lane_id.clone(),
+            vec![DataProposal::new_root(
+                lane_id,
                 vec![BlobTransaction::new(
                     "test@hyli",
                     vec![RegisterContractAction {
@@ -111,20 +112,31 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
         .unwrap(),
     );
     let proof_hash = proof.hashed();
+    let verified_output = HyliOutput {
+        success: true,
+        identity: blob_tx.identity.clone(),
+        blobs: blob_tx.blobs.clone().into(),
+        tx_hash: blob_tx_hash.clone(),
+        ..HyliOutput::default()
+    };
 
-    node_client.send(RestApiMessage::NewTx(blob_tx.clone().into()))?;
+    node_client.send(RestApiMessage::NewTx {
+        tx: blob_tx.clone().into(),
+        lane_suffix: None,
+    })?;
 
     // Send as many TXs as needed to hung all the workers if we were calling spawn
     for _ in 0..tokio::runtime::Handle::current().metrics().num_workers() {
-        node_client.send(RestApiMessage::NewTx(
-            ProofTransaction {
+        node_client.send(RestApiMessage::NewTx {
+            tx: ProofTransaction {
                 contract_name: contract_name.clone(),
                 verifier: "test-slow".into(),
                 program_id: ProgramId(vec![]),
                 proof: proof.clone(),
             }
             .into(),
-        ))?;
+            lane_suffix: None,
+        })?;
         info!("Sent new tx");
     }
 
@@ -145,17 +157,18 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
         match evt {
             NodeStateEvent::NewBlock(block) => {
                 info!("Got Block");
-                if block.parsed_block.txs.iter().any(|(tx_id, tx)| {
-                    if let TransactionData::VerifiedProof(data) = &tx.transaction_data {
-                        info!(
-                            "Got TX {} in block {}",
-                            tx_id, block.parsed_block.block_height
-                        );
-                        data.contract_name == contract_name
-                    } else {
-                        false
-                    }
-                }) {
+                if block
+                    .signed_block
+                    .iter_txs_with_id()
+                    .any(|(_lane_id, tx_id, tx)| {
+                        if let TransactionData::VerifiedProof(data) = &tx.transaction_data {
+                            info!("Got TX {} in block {}", tx_id, block.signed_block.height());
+                            data.contract_name == contract_name
+                        } else {
+                            false
+                        }
+                    })
+                {
                     break;
                 }
             }
@@ -198,7 +211,7 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
                     blob_tx_hash: blob_tx_hash.clone(),
                     program_id: ProgramId(vec![]),
                     verifier: "test-slow".into(),
-                    hyli_output: HyliOutput::default(),
+                    hyli_output: verified_output.clone(),
                 }],
                 is_recursive: false,
                 proof_size: proof.0.len(),
@@ -206,7 +219,7 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
             .into(),
         );
     }
-    let data_proposal = DataProposal::new(Some(data_prop_hash), txs);
+    let data_proposal = DataProposal::new(data_prop_hash, txs);
 
     // Test setup 2: count the number of commits during the slow proof verification
     // if we're blocking the consensus, this will be lower than expected.
@@ -222,8 +235,14 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
         }
     });
 
+    let lane_id = LaneId::new(node_modules.crypto.validator_pubkey().clone());
+    let data_proposal_hash = data_proposal.hashed();
+    let cumul_size = LaneBytesSize(data_proposal.estimate_size() as u64);
+    let proposal_sig = node_modules
+        .crypto
+        .sign((data_proposal_hash.clone(), cumul_size))?;
     node_client.send(node_modules.crypto.sign_msg_with_header(
-        MempoolNetMessage::DataProposal(data_proposal.hashed(), data_proposal),
+        MempoolNetMessage::DataProposal(lane_id, data_proposal_hash, data_proposal, proposal_sig),
     )?)?;
 
     // Wait until we commit this TX
@@ -231,13 +250,17 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
         let cut: NodeStateEvent = node_client.recv().await?;
         match cut {
             NodeStateEvent::NewBlock(block) => {
-                if block.parsed_block.txs.iter().any(|(_tx_id, tx)| {
-                    if let TransactionData::VerifiedProof(data) = &tx.transaction_data {
-                        data.contract_name == contract_name
-                    } else {
-                        false
-                    }
-                }) {
+                if block
+                    .signed_block
+                    .iter_txs_with_id()
+                    .any(|(_lane_id, _tx_id, tx)| {
+                        if let TransactionData::VerifiedProof(data) = &tx.transaction_data {
+                            data.contract_name == contract_name
+                        } else {
+                            false
+                        }
+                    })
+                {
                     break;
                 }
             }

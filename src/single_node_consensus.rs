@@ -11,16 +11,17 @@ use crate::model::*;
 use crate::utils::conf::SharedConf;
 use anyhow::Result;
 use borsh::{BorshDeserialize, BorshSerialize};
+use hyli_bus::modules::ModulePersistOutput;
 use hyli_crypto::SharedBlstCrypto;
 use hyli_model::utils::TimestampMs;
 use hyli_modules::bus::command_response::Query;
 use hyli_modules::bus::SharedMessageBus;
+use hyli_modules::module_handle_messages;
 use hyli_modules::modules::admin::{
     QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse,
 };
 use hyli_modules::modules::module_bus_client;
 use hyli_modules::modules::Module;
-use hyli_modules::{log_error, module_handle_messages};
 use hyli_net::clock::TimestampMsClock;
 use staking::state::Staking;
 use tracing::{debug, warn};
@@ -29,9 +30,9 @@ module_bus_client! {
 struct SingleNodeConsensusBusClient {
     sender(ConsensusEvent),
     sender(Query<QueryNewCut, Cut>),
-    receiver(Query<QueryConsensusInfo, ConsensusInfo>),
-    receiver(Query<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse>),
     receiver(GenesisEvent),
+    query(QueryConsensusInfo, ConsensusInfo),
+    query(QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse),
 }
 }
 
@@ -63,13 +64,16 @@ impl Module for SingleNodeConsensus {
     type Context = SharedRunContext;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let file = ctx
-            .config
-            .data_directory
-            .clone()
-            .join("consensus_single_node.bin");
+        let file = PathBuf::from("consensus_single_node.bin");
 
-        let store: SingleNodeConsensusStore = Self::load_from_disk_or_default(file.as_path());
+        let store: SingleNodeConsensusStore =
+            match Self::load_from_disk(&ctx.config.data_directory, &file)? {
+                Some(s) => s,
+                None => {
+                    warn!("Starting SingleNodeConsensus from default.");
+                    SingleNodeConsensusStore::default()
+                }
+            };
 
         let api = super::consensus::api::api(&bus, &ctx).await;
         if let Ok(mut guard) = ctx.api.router.lock() {
@@ -93,15 +97,13 @@ impl Module for SingleNodeConsensus {
         self.start()
     }
 
-    async fn persist(&mut self) -> Result<()> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         if let Some(file) = &self.file {
-            _ = log_error!(
-                Self::save_on_disk(file.as_path(), &self.store),
-                "Persisting single node consensus state"
-            );
+            let checksum = Self::save_on_disk(&self.config.data_directory, file, &self.store)?;
+            return Ok(vec![(self.config.data_directory.join(file), checksum)]);
         }
 
-        Ok(())
+        Ok(vec![])
     }
 }
 
@@ -141,7 +143,7 @@ impl SingleNodeConsensus {
             self.store.has_done_genesis = true;
             // Save the genesis block to disk
             if let Some(file) = &self.file {
-                if let Err(e) = Self::save_on_disk(file.as_path(), &self.store) {
+                if let Err(e) = Self::save_on_disk(&self.config.data_directory, file, &self.store) {
                     warn!(
                         "Failed to save consensus single node storage on disk: {}",
                         e
@@ -240,21 +242,20 @@ impl SingleNodeConsensus {
 mod tests {
     use super::*;
     use crate::bus::dont_use_this::get_receiver;
-    use crate::bus::metrics::BusMetrics;
     use crate::bus::{bus_client, SharedMessageBus};
     use crate::utils::conf::Conf;
     use anyhow::Result;
     use hyli_crypto::BlstCrypto;
     use hyli_modules::bus::dont_use_this::get_sender;
+    use hyli_modules::bus::{BusReceiver, BusSender};
     use hyli_modules::handle_messages;
     use hyli_modules::modules::signal::ShutdownModule;
     use std::sync::Arc;
-    use tokio::sync::broadcast::{Receiver, Sender};
 
     pub struct TestContext {
-        consensus_event_receiver: Receiver<ConsensusEvent>,
+        consensus_event_receiver: BusReceiver<ConsensusEvent>,
         #[allow(dead_code)]
-        shutdown_sender: Sender<ShutdownModule>,
+        shutdown_sender: BusSender<ShutdownModule>,
         single_node_consensus: SingleNodeConsensus,
     }
 
@@ -267,7 +268,7 @@ mod tests {
     impl TestContext {
         pub async fn new(name: &str) -> Self {
             let crypto = BlstCrypto::new(name).unwrap();
-            let shared_bus = SharedMessageBus::new(BusMetrics::global("global".to_string()));
+            let shared_bus = SharedMessageBus::new();
             let conf = Arc::new(Conf::default());
             let store = SingleNodeConsensusStore::default();
 
@@ -307,7 +308,8 @@ mod tests {
             let rec = self
                 .consensus_event_receiver
                 .try_recv()
-                .expect(format!("{err}: No message broadcasted").as_str());
+                .expect(format!("{err}: No message broadcasted").as_str())
+                .into_message();
 
             match rec {
                 ConsensusEvent::CommitConsensusProposal(CommittedConsensusProposal {

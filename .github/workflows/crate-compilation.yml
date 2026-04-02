@@ -11,14 +11,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - crate: hyli
-            features: sp1
           - crate: hyli-client-sdk
-            features: rest,indexer,risc0,sp1,turmoil
-          - crate: hyli-contract-sdk
-            features: sp1
+            features: rest,csi,risc0,turmoil
           - crate: hyli-contract-sdk
             features: risc0
+          - crate: hyli-modules
+            features: risc0,db
         crate: ${{ fromJson(needs.list-crates.outputs.crates) }}
 
     needs: list-crates
@@ -27,20 +25,50 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
       - uses: dtolnay/install@cargo-docs-rs
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-check-crate
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Compile crate '${{ matrix.crate }}' with no default features
-        run: cargo build -p ${{ matrix.crate }} --no-default-features
-      
+        run: cargo check -p ${{ matrix.crate }} --no-default-features
+
       - name: Compile crate '${{ matrix.crate }}' with default features
-        run: cargo build -p ${{ matrix.crate }}
+        run: cargo check -p ${{ matrix.crate }}
+
+      - name: Clean workspace on hyli branch
+        if: matrix.crate == 'hyli'
+        run: cargo clean
 
       - name: Compile crate '${{ matrix.crate }}' with specific features
         if: matrix.features != ''
-        run: cargo build -p ${{ matrix.crate }} --features ${{ matrix.features }}
-      
+        run: cargo check -p ${{ matrix.crate }} --features ${{ matrix.features }}
+
       - name: Build doc for crate '${{ matrix.crate }}'
         if: matrix.crate != 'hyli-noir-tools'
         run: cargo docs-rs -p ${{ matrix.crate }}
+
+  check-no-std:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate:
+          - hyli-model
+          - hyli-contract-sdk
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: thumbv7em-none-eabi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-check-no-std
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Check '${{ matrix.crate }}' in no_std
+        run: cargo check -p ${{ matrix.crate }} --no-default-features --target thumbv7em-none-eabi
 
   list-crates:
     runs-on: ubuntu-latest
@@ -55,6 +83,5 @@ jobs:
       - id: crate-list
         name: List workspace crates
         run: |
-          CRATES=$(cargo metadata --no-deps --format-version=1 | jq -c '[.packages[].name]')
+          CRATES=$(cargo metadata --no-deps --format-version=1 | jq -c '[.packages[] | select(.targets[] | .kind[] | . == "lib" or . == "proc-macro") | .name]')
           echo "crates=$CRATES" >> $GITHUB_OUTPUT
-

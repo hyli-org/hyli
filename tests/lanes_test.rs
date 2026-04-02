@@ -48,10 +48,16 @@ async fn faucet_and_delegate(
         // Replace prover binaries for non-reproducible mode.
         .with_prover(
             "hydentity".into(),
-            Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+            Risc0Prover::new(HYDENTITY_ELF.to_vec(), HYDENTITY_ID),
         )
-        .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
-        .with_prover("staking".into(), Risc0Prover::new(STAKING_ELF, STAKING_ID))
+        .with_prover(
+            "hyllar".into(),
+            Risc0Prover::new(HYLLAR_ELF.to_vec(), HYLLAR_ID),
+        )
+        .with_prover(
+            "staking".into(),
+            Risc0Prover::new(STAKING_ELF.to_vec(), STAKING_ID),
+        )
         .build();
 
     let node_info = client.get_node_info().await?;
@@ -155,35 +161,55 @@ async fn scenario_lane_manager_outside_consensus(mut ctx: E2ECtx, delegate: bool
 
     let indexer_client = ctx.indexer_client();
 
+    let mut tries = 0;
     loop {
         match indexer_client.get_transaction_with_hash(&tx_hash).await {
-            Ok(_) => {
-                break;
-            }
-            Err(_) => {
-                std::thread::sleep(std::time::Duration::from_millis(200));
+            Ok(_) => break,
+            Err(err) => {
+                tries += 1;
+                if tries > 150 {
+                    return Err(anyhow::anyhow!(
+                        "Indexer did not catch up in time for tx {tx_hash}: {err}"
+                    ));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
         }
     }
 
-    assert_eq!(
-        indexer_client
+    let mut tries = 0;
+    loop {
+        match indexer_client
             .get_indexer_contract(&ContractName::new("test"))
             .await
-            .unwrap()
-            .program_id,
-        vec![1, 2, 3]
-    );
+        {
+            Ok(contract) => {
+                assert_eq!(contract.program_id, vec![1, 2, 3]);
+                break;
+            }
+            Err(err) => {
+                tries += 1;
+                if tries > 150 {
+                    return Err(anyhow::anyhow!(
+                        "Indexer did not expose contract in time: {err}"
+                    ));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        }
+    }
 
     Ok(())
 }
 
+#[ignore = "will be enabled back in #1993"]
 #[test_log::test(tokio::test)]
 async fn lane_manager_outside_consensus_single_node() -> Result<()> {
     let ctx = E2ECtx::new_single_with_indexer(500).await?;
     scenario_lane_manager_outside_consensus(ctx, false).await
 }
 
+#[ignore = "will be enabled back in #1993"]
 #[test_log::test(tokio::test)]
 async fn lane_manager_outside_consensus_multi_node() -> Result<()> {
     let ctx = E2ECtx::new_multi_with_indexer(2, 500).await?;

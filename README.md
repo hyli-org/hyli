@@ -6,14 +6,13 @@
     <img src="https://github.com/hyli-org/hyli-assets/blob/main/Logos/Logo/HYLI_WORDMARK_ORANGE.png?raw=true" width="320" alt="Hyli">
   </a>
 
-  _**Hyli** is the new proof-powered L1 to build the next generation of apps onchain._
+_**Hyli** is a confidential yet verifiable financial settlement infrastructure for European regulated actors. It enables regulated institutions to settle, tokenize, and comply without exposing sensitive data._
 
-  This repository hosts the **Rust node client** for the [Hyli](https://hyli.org) chain.
+This repository hosts the **Rust node client** for the [Hyli](https://hyli.org) chain.
 
-  
-  
-  [![Telegram Chat][tg-badge]][tg-url]
-  [![Twitter][twitter-badge]][twitter-url]
+[![Telegram Chat][tg-badge]][tg-url]
+[![Twitter][twitter-badge]][twitter-url]
+
 </div>
 
 > [!IMPORTANT]
@@ -42,6 +41,7 @@ On Hyli, instead of executing transactions onchain, you run your app logic anywh
 Clone this repository.
 
 Run:
+
 ```sh
 git checkout v0.13.1
 rm -rf data_node && RISC0_DEV_MODE=true SP1_PROVER=mock cargo run -- --pg
@@ -98,34 +98,16 @@ cargo run
 ### Build Locally
 
 ```bash
-# Build the dependency image, this is a cache layer for faster iteration builds
-docker build -f Dockerfile.dependencies -t hyli-dep .
 # Build the node image
 docker build -t hyli .
-```
 
-### Build Locally on MacOS (Apple Silicon)
+# To build with the base image including the noir verifier, run with
+docker build --build-arg BASE_IMAGE=ghcr.io/hyli-org/base:main -t hyli-noir .
 
-##### 🧰 Requirements for buildx users
-If you are building for an architecture different than your host machine (e.g., building arm64 on an amd64 host), make sure to set up your environment accordingly:
-
-```bash
-# 1. Enable Docker BuildKit (recommended)
-export DOCKER_BUILDKIT=1
-
-# 2. Create and use a buildx builder (only needed once)
-docker buildx create --use --name hyli-builder
-docker buildx inspect --bootstrap
-
-# 3. Install QEMU for cross-platform builds
-docker run --privileged --rm tonistiigi/binfmt --install all
-```
-
-```bash
-# Build the dependency image, this is a cache layer for faster iteration builds
-docker buildx build --platform linux/arm64 -f Dockerfile.dependencies -t hyli-dep .
-# Build the node image
-docker buildx build --platform linux/arm64 -t hyli .
+# Optional: build the dependency image, this is a cache layer for faster iteration builds
+docker build -f .github/docker/Dockerfile.dependencies -t hyli-dep .
+# You can then build with:
+docker build --build-arg DEP_IMAGE=hyli-dep -t hyli .
 ```
 
 ### Run Locally with Docker
@@ -134,7 +116,6 @@ docker buildx build --platform linux/arm64 -t hyli .
 docker run -v ./db:/hyli/data -e HYLI_RUN_INDEXER=false -p 4321:4321 -p 1234:1234 hyli
 ```
 
-> 🛠️ **Note**: If you build on MacOS (Apple Silicon), add `--platform linux/arm64` to run script.
 > 🛠️ **Note**: If you encounter permission issues with the `/hyli/data` volume, add the `--privileged` flag.
 
 </details>

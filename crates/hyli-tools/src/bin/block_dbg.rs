@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::{Parser, command};
+use clap::Parser;
 use client_sdk::{
     contract_indexer::utoipa::OpenApi, helpers::test::TxExecutorTestProver,
     rest_client::test::NodeApiMockClient,
@@ -8,19 +8,20 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
     execute, terminal,
 };
-use hyli_contract_sdk::{Block, NodeStateEvent, TransactionData, TxId, api::NodeInfo};
 use hyli_contract_sdk::{BlockHeight, SignedBlock};
-use hyli_model::DataEvent;
+use hyli_contract_sdk::{NodeStateEvent, TransactionData, TxId, api::NodeInfo};
+use hyli_model::{DataEvent, StatefulEvent, StatefulEvents};
 use hyli_modules::modules::{
+    block_processor::BusOnlyProcessor,
     da_listener::DAListenerConf,
+    da_listener::SignedDAListener,
     prover::{AutoProver, AutoProverCtx},
-    signed_da_listener::SignedDAListener,
 };
 use hyli_modules::{
-    bus::{SharedMessageBus, metrics::BusMetrics},
+    bus::SharedMessageBus,
     module_bus_client, module_handle_messages,
     modules::{
-        BuildApiContextInner, Module, ModulesHandler,
+        BuildApiContextInner, Module, ModulesHandler, ModulesHandlerOptions,
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         rest::{ApiDoc, RestApi, RestApiRunContext, Router},
     },
@@ -84,6 +85,9 @@ async fn main() -> Result<()> {
     let log_buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
     let log_buffer_clone = log_buffer.clone();
 
+    let data_dir = dump_folder.join("data");
+    fs::create_dir_all(&data_dir).context("Failed to create data directory")?;
+
     // Open log file, truncate it if it exists
     use std::fs::OpenOptions;
     let log_file = OpenOptions::new()
@@ -98,6 +102,8 @@ async fn main() -> Result<()> {
     let filter2 = EnvFilter::builder()
         .with_default_directive(LevelFilter::INFO.into())
         .from_env()?;
+
+    hyli_turmoil_shims::init_test_meter_provider();
 
     // Buffer writer for TUI
     struct BufferWriter {
@@ -147,7 +153,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting block debugger");
 
-    let bus = SharedMessageBus::new(BusMetrics::global("debug".to_string()));
+    let bus = SharedMessageBus::new();
 
     tracing::info!("Setting up modules");
 
@@ -165,15 +171,18 @@ async fn main() -> Result<()> {
         .unwrap_or(false);
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus).await;
+    let mut handler =
+        ModulesHandler::new(&bus, data_dir.clone(), ModulesHandlerOptions::default())?;
 
     if !has_blocks {
         handler
-            .build_module::<SignedDAListener>(DAListenerConf {
-                data_directory: PathBuf::from("data"),
+            .build_module::<SignedDAListener<BusOnlyProcessor>>(DAListenerConf {
+                data_directory: data_dir.clone(),
                 da_read_from: "localhost:4141".to_string(),
                 start_block: Some(BlockHeight(0)),
                 timeout_client_secs: 10,
+                da_fallback_addresses: vec![],
+                processor_config: (),
             })
             .await?;
     } else {
@@ -191,18 +200,17 @@ async fn main() -> Result<()> {
         let node_client = NodeApiMockClient::new();
         node_client.set_block_height(BlockHeight(4000));
         handler
-            .build_module::<AutoProver<SmtTokenProvableState>>(Arc::new(AutoProverCtx {
-                data_directory: PathBuf::from("data"),
+            .build_module::<AutoProver<SmtTokenProvableState, TxExecutorTestProver<SmtTokenContract>>>(Arc::new(AutoProverCtx {
+                data_directory: data_dir.clone(),
                 prover: Arc::new(prover),
                 contract_name: "oranj".into(),
                 node: Arc::new(node_client),
                 api: None,
-                default_state: Default::default(),
-                buffer_blocks: 0,
+                tx_buffer_size: 0,
                 max_txs_per_proof: 40,
                 tx_working_window_size: 180,
-            }))
-            .await?;
+                idle_flush_interval: Duration::from_secs(5),
+        })).await?;
 
         let build_api_ctx = Arc::new(BuildApiContextInner {
             router: Mutex::new(Some(Router::new())),
@@ -212,7 +220,7 @@ async fn main() -> Result<()> {
         handler
             .build_module::<ContractStateIndexer<AccountSMT>>(ContractStateIndexerCtx {
                 contract_name: "oranj".into(),
-                data_directory: dump_folder.clone(),
+                data_directory: data_dir.clone(),
                 api: build_api_ctx.clone(),
             })
             .await?;
@@ -288,7 +296,29 @@ struct DumpUiState {
     processed_height: Option<u64>,
     node_state: Option<NodeState>,
     tx_status: HashMap<TxId, TxStatus>,
-    processed_blocks: HashMap<u64, Arc<Block>>,
+    processed_blocks: HashMap<u64, ProcessedBlockView>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct ProcessedBlockView {
+    successful_txs: Vec<TxId>,
+    failed_txs: Vec<TxId>,
+    timed_out_txs: Vec<TxId>,
+}
+
+impl ProcessedBlockView {
+    fn from_stateful_events(stateful_events: &StatefulEvents) -> Self {
+        let mut view = Self::default();
+        for (tx_id, event) in &stateful_events.events {
+            match event {
+                StatefulEvent::SettledTx(_) => view.successful_txs.push(tx_id.clone()),
+                StatefulEvent::FailedTx(_) => view.failed_txs.push(tx_id.clone()),
+                StatefulEvent::TimedOutTx(_) => view.timed_out_txs.push(tx_id.clone()),
+                _ => {}
+            }
+        }
+        view
+    }
 }
 
 impl Module for BlockDbg {
@@ -493,7 +523,7 @@ impl BlockDbg {
                                         tracing::info!("Processing blocks up to height {}", target_height);
 
                                         // Process blocks in order
-                                        ui_state.node_state = Some(NodeState::create("block_dbg".to_string(), "block_dbg"));
+                                        ui_state.node_state = Some(NodeState::create("block_dbg"));
                                         ui_state.tx_status.clear();
                                         let outputs = ui_state.blocks.iter().filter_map(|(block, _)|
                                                 if block.consensus_proposal.slot <= target_height {
@@ -504,11 +534,14 @@ impl BlockDbg {
                                                 }
                                             ).collect::<Vec<_>>();
                                         for block in outputs {
-                                            ui_state.processed_height = Some(block.parsed_block.block_height.0);
-                                            ui_state.process_block_outputs(&block.parsed_block);
+                                            let height = block.signed_block.height().0;
+                                            ui_state.processed_height = Some(height);
+                                            ui_state.process_block_outputs(&block.signed_block, &block.stateful_events);
                                             // Activate if you want provers on.
                                             // self.bus.send(NodeStateEvent::NewBlock(Box::new(block.clone())))?;
-                                            ui_state.processed_blocks.insert(block.parsed_block.block_height.0, block.parsed_block);
+                                            ui_state
+                                                .processed_blocks
+                                                .insert(height, ProcessedBlockView::from_stateful_events(&block.stateful_events));
                                             ui_state.redraw = true;
                                         }
                                     }
@@ -641,7 +674,7 @@ impl BlockDbg {
                 {
                     format!(
                         "Block {}\nSuccessful txs: {}\nFailed txs: {}\nTimed out txs: {}",
-                        pb.block_height,
+                        block.consensus_proposal.slot,
                         serde_json::to_string_pretty(&pb.successful_txs)
                             .unwrap_or("BAD JSON".to_string()),
                         serde_json::to_string_pretty(&pb.failed_txs)
@@ -760,31 +793,28 @@ impl BlockDbg {
 }
 
 impl DumpUiState {
-    fn process_block_outputs(&mut self, block: &Block) {
-        // Update tx statuses based on block outputs
-        for tx_hash in &block.successful_txs {
-            let tx_id = TxId(
-                block.dp_parent_hashes.get(tx_hash).unwrap().clone(),
-                tx_hash.clone(),
-            );
-            self.tx_status.insert(tx_id, TxStatus::Success);
+    fn process_block_outputs(
+        &mut self,
+        signed_block: &SignedBlock,
+        stateful_events: &StatefulEvents,
+    ) {
+        for (tx_id, event) in &stateful_events.events {
+            match event {
+                StatefulEvent::SettledTx(_) => {
+                    self.tx_status.insert(tx_id.clone(), TxStatus::Success);
+                }
+                StatefulEvent::FailedTx(_) => {
+                    self.tx_status.insert(tx_id.clone(), TxStatus::Failed);
+                }
+                StatefulEvent::TimedOutTx(_) => {
+                    self.tx_status.insert(tx_id.clone(), TxStatus::TimedOut);
+                }
+                _ => {}
+            }
         }
-        for tx_hash in &block.failed_txs {
-            let tx_id = TxId(
-                block.dp_parent_hashes.get(tx_hash).unwrap().clone(),
-                tx_hash.clone(),
-            );
-            self.tx_status.insert(tx_id, TxStatus::Failed);
-        }
-        for tx_hash in &block.timed_out_txs {
-            let tx_id = TxId(
-                block.dp_parent_hashes.get(tx_hash).unwrap().clone(),
-                tx_hash.clone(),
-            );
-            self.tx_status.insert(tx_id, TxStatus::TimedOut);
-        }
-        // Set Sequenced status for any new transactions
-        for (tx_id, _) in &block.txs {
+
+        // Set Sequenced status for any new transactions (blob or proof).
+        for (_lane_id, tx_id, _tx) in signed_block.iter_txs_with_id() {
             self.tx_status
                 .entry(tx_id.clone())
                 .or_insert(TxStatus::Sequenced);

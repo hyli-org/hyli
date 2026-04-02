@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
@@ -6,6 +9,7 @@ use sha3::{Digest, Sha3_256};
 use utoipa::ToSchema;
 
 use crate::*;
+use hyli_net_traits::TcpMessageLabel;
 
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, Eq, PartialEq)]
 pub enum DataEvent {
@@ -51,6 +55,8 @@ pub struct UnsettledBlobTransaction {
     pub tx_context: Arc<TxContext>,
     pub blobs_hash: BlobsHashes,
     pub possible_proofs: BTreeMap<BlobIndex, Vec<(ProgramId, Verifier, TxId, HyliOutput)>>, // ToSchema doesn't like the alias
+    // The list of contracts whose settlement can be guaranteed, independently of the rest of the transaction's blobs
+    pub settleable_contracts: HashSet<ContractName>,
 }
 
 pub type BlobProof = (ProgramId, Verifier, TxId, HyliOutput);
@@ -105,8 +111,8 @@ pub struct BlobProofOutputHash(pub Vec<u8>);
 impl Hashed<BlobProofOutputHash> for BlobProofOutput {
     fn hashed(&self) -> BlobProofOutputHash {
         let mut hasher = Sha3_256::new();
-        hasher.update(self.blob_tx_hash.0.as_bytes());
-        hasher.update(self.original_proof_hash.0.as_bytes());
+        hasher.update(&self.blob_tx_hash.0);
+        hasher.update(&self.original_proof_hash.0);
         hasher.update(self.program_id.0.clone());
         hasher.update(contract::Hashed::hashed(&self.hyli_output).0);
         BlobProofOutputHash(hasher.finalize().to_vec())
@@ -180,7 +186,6 @@ pub enum StatefulEvent {
 #[derive(Default, Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
 pub struct NodeStateBlock {
     pub signed_block: std::sync::Arc<SignedBlock>,
-    pub parsed_block: std::sync::Arc<Block>,
     pub staking_data: std::sync::Arc<BlockStakingData>,
     pub stateful_events: std::sync::Arc<StatefulEvents>,
 }
@@ -188,4 +193,22 @@ pub struct NodeStateBlock {
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
 pub enum NodeStateEvent {
     NewBlock(NodeStateBlock),
+}
+
+// Da Listener
+//
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug, PartialEq, Eq, TcpMessageLabel)]
+pub enum DataAvailabilityRequest {
+    /// Start streaming blocks from a given height
+    StreamFromHeight(BlockHeight),
+    /// Request a specific block by height (prioritized)
+    BlockRequest(BlockHeight),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize, TcpMessageLabel)]
+pub enum DataAvailabilityEvent {
+    SignedBlock(SignedBlock),
+    MempoolStatusEvent(MempoolStatusEvent),
+    /// Block not found at the requested height
+    BlockNotFound(BlockHeight),
 }

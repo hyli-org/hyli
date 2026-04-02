@@ -4,6 +4,10 @@ on:
   pull_request:
     paths: ["**/*.rs"]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: write
@@ -13,22 +17,30 @@ jobs:
   clippy:
     name: clippy check
     if: github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    runs-on: arc-runner-set
     steps:
       - uses: actions/checkout@v4
-      # For keyring dependencies
-      - run: sudo apt install libdbus-1-dev pkg-config
-      - uses: actions-rs/toolchain@v1
+
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          components: clippy, rustfmt
-          override: true
+          components: clippy
       - uses: LoliGothick/clippy-check@master
         with:
           deny: warnings
           token: ${{ secrets.GITHUB_TOKEN }}
-          options: "--all-targets -F sp1 -F risc0"
-      - name: Run rustfmt
-        run: cargo fmt --all -- --check
+          options: "--workspace --all-targets -F sp1 -F risc0"
       - name: Run cargo check
         run: cargo check --workspace
+
+  rustfmt:
+    name: rustfmt check
+    if: github.event.pull_request.draft == false
+    runs-on: arc-runner-set
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Run rustfmt
+        run: cargo fmt --all -- --check

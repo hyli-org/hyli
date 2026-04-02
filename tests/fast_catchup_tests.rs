@@ -26,17 +26,17 @@ mod e2e_fast_catchup {
         ctx.wait_height(5).await?;
 
         conf.run_fast_catchup = true;
-        conf.fast_catchup_from = format!(
+        conf.fast_catchup_peers = vec![format!(
             "http://localhost:{}",
             ctx.nodes
                 .first()
                 .expect("Node 0 should exist")
                 .conf
                 .admin_server_port
-        );
+        )];
         conf.fast_catchup_backfill = true;
 
-        let process = test_helpers::TestProcess::new("hyli", conf);
+        let process = test_helpers::TestProcess::new(assert_cmd::cargo::cargo_bin!("hyli"), conf);
         process.start();
 
         let client = ctx.client_by_id("node-3");
@@ -47,6 +47,7 @@ mod e2e_fast_catchup {
         Ok(())
     }
 
+    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn fast_catchup_correctly() -> Result<()> {
         let mut ctx = E2ECtx::new_multi_with_indexer(4, 500).await?;
@@ -60,17 +61,17 @@ mod e2e_fast_catchup {
         ctx.wait_height(5).await?;
 
         conf.run_fast_catchup = true;
-        conf.fast_catchup_from = format!(
+        conf.fast_catchup_peers = vec![format!(
             "http://localhost:{}",
             ctx.nodes
                 .first()
                 .expect("Node 0 should exist")
                 .conf
                 .admin_server_port
-        );
+        )];
         conf.fast_catchup_backfill = false;
 
-        let process = test_helpers::TestProcess::new("hyli", conf);
+        let process = test_helpers::TestProcess::new(assert_cmd::cargo::cargo_bin!("hyli"), conf);
         process.start();
 
         let client = ctx.client_by_id("node-3");

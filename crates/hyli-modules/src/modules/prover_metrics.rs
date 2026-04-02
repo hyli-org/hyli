@@ -1,8 +1,5 @@
+use crate::telemetry::{global_meter_or_panic, Counter, Gauge, Histogram, KeyValue};
 use client_sdk::helpers::ProverInfo;
-use opentelemetry::{
-    metrics::{Counter, Gauge, Histogram},
-    KeyValue,
-};
 
 #[derive(Debug, Clone)]
 pub struct AutoProverMetrics {
@@ -23,7 +20,7 @@ pub struct AutoProverMetrics {
 
 impl AutoProverMetrics {
     pub fn global(contract_name: String, infos: ProverInfo) -> AutoProverMetrics {
-        let my_meter = opentelemetry::global::meter("auto_prover");
+        let my_meter = global_meter_or_panic();
 
         AutoProverMetrics {
             proofs_requested: my_meter

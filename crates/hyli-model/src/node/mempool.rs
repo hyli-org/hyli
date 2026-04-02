@@ -1,15 +1,16 @@
 use borsh::{BorshDeserialize, BorshSerialize};
+use hyli_net_traits::TcpMessageLabel;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::{fmt::Display, sync::RwLock};
 
 use crate::*;
 
-#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize, TcpMessageLabel)]
 pub enum MempoolStatusEvent {
     WaitingDissemination {
         parent_data_proposal_hash: DataProposalHash,
-        tx: Transaction,
+        txs: Vec<Transaction>,
     },
     DataProposalCreated {
         parent_data_proposal_hash: DataProposalHash,
@@ -24,10 +25,56 @@ pub enum MempoolBlockEvent {
     StartedBuildingBlocks(BlockHeight),
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    BorshSerialize,
+    BorshDeserialize,
+    PartialEq,
+    Eq,
+    Hash,
+    Ord,
+    PartialOrd,
+)]
+#[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
+pub enum DataProposalParent {
+    LaneRoot(LaneId),
+    DP(DataProposalHash),
+}
+
+impl DataProposalParent {
+    pub fn dp_hash(&self) -> Option<&DataProposalHash> {
+        match self {
+            DataProposalParent::DP(hash) => Some(hash),
+            DataProposalParent::LaneRoot(_) => None,
+        }
+    }
+
+    pub fn lane_id(&self) -> Option<&LaneId> {
+        match self {
+            DataProposalParent::LaneRoot(lane_id) => Some(lane_id),
+            DataProposalParent::DP(_) => None,
+        }
+    }
+
+    pub fn is_lane_root(&self) -> bool {
+        matches!(self, DataProposalParent::LaneRoot(_))
+    }
+
+    pub fn as_tx_parent_hash(&self) -> DataProposalHash {
+        match self {
+            DataProposalParent::LaneRoot(lane_id) => DataProposalHash(lane_id.to_bytes()),
+            DataProposalParent::DP(hash) => hash.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, BorshSerialize, BorshDeserialize, TcpMessageLabel)]
 #[readonly::make]
 pub struct DataProposal {
-    pub parent_data_proposal_hash: Option<DataProposalHash>,
+    pub parent_data_proposal_hash: DataProposalParent,
     pub txs: Vec<Transaction>,
     /// Internal cache of the hash of the transaction
     #[borsh(skip)]
@@ -35,9 +82,17 @@ pub struct DataProposal {
 }
 
 impl DataProposal {
-    pub fn new(parent_data_proposal_hash: Option<DataProposalHash>, txs: Vec<Transaction>) -> Self {
+    pub fn new(parent_data_proposal_hash: DataProposalHash, txs: Vec<Transaction>) -> Self {
         Self {
-            parent_data_proposal_hash,
+            parent_data_proposal_hash: DataProposalParent::DP(parent_data_proposal_hash),
+            txs,
+            hash_cache: RwLock::new(None),
+        }
+    }
+
+    pub fn new_root(lane_id: LaneId, txs: Vec<Transaction>) -> Self {
+        Self {
+            parent_data_proposal_hash: DataProposalParent::LaneRoot(lane_id),
             txs,
             hash_cache: RwLock::new(None),
         }
@@ -59,6 +114,43 @@ impl DataProposal {
         });
     }
 
+    pub fn take_proofs(&mut self) -> Vec<(u64, ProofData)> {
+        self.txs
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(tx_idx, tx)| {
+                match &mut tx.transaction_data {
+                    TransactionData::VerifiedProof(proof_tx) => {
+                        proof_tx.proof.take().map(|proof| (tx_idx as u64, proof))
+                    }
+                    TransactionData::Proof(_) => {
+                        // This can never happen.
+                        // A DataProposal that has been processed has turned all TransactionData::Proof into TransactionData::VerifiedProof
+                        unreachable!();
+                    }
+                    TransactionData::Blob(_) => None,
+                }
+            })
+            .collect()
+    }
+
+    /// Proofs are kept as a vector because DP transactions are fundamentally ordered.
+    pub fn hydrate_proofs(&mut self, proofs: Vec<(u64, ProofData)>) {
+        for (tx_idx, proof) in proofs {
+            let Ok(tx_idx) = usize::try_from(tx_idx) else {
+                continue;
+            };
+            let Some(tx) = self.txs.get_mut(tx_idx) else {
+                continue;
+            };
+            if let TransactionData::VerifiedProof(ref mut vpt) = tx.transaction_data {
+                if vpt.proof.is_none() {
+                    vpt.proof = Some(proof);
+                }
+            }
+        }
+    }
+
     /// This is used to set the hash of the DataProposal when we can trust we know it
     /// (specifically - deserializating from local storage)
     /// # Safety
@@ -70,11 +162,11 @@ impl DataProposal {
 
 impl Clone for DataProposal {
     fn clone(&self) -> Self {
-        let mut new = Self::default();
-        new.parent_data_proposal_hash = self.parent_data_proposal_hash.clone();
-        new.txs = self.txs.clone();
-        new.hash_cache = RwLock::new(self.hash_cache.read().unwrap().clone());
-        new
+        DataProposal {
+            parent_data_proposal_hash: self.parent_data_proposal_hash.clone(),
+            txs: self.txs.clone(),
+            hash_cache: RwLock::new(self.hash_cache.read().unwrap().clone()),
+        }
     }
 }
 
@@ -111,7 +203,6 @@ pub struct TxId(pub DataProposalHash, pub TxHash);
 
 #[derive(
     Clone,
-    Debug,
     Default,
     Serialize,
     Deserialize,
@@ -124,7 +215,34 @@ pub struct TxId(pub DataProposalHash, pub TxHash);
     PartialOrd,
 )]
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
-pub struct DataProposalHash(pub String);
+pub struct DataProposalHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);
+
+impl From<Vec<u8>> for DataProposalHash {
+    fn from(v: Vec<u8>) -> Self {
+        DataProposalHash(v)
+    }
+}
+impl From<&[u8]> for DataProposalHash {
+    fn from(v: &[u8]) -> Self {
+        DataProposalHash(v.to_vec())
+    }
+}
+impl<const N: usize> From<&[u8; N]> for DataProposalHash {
+    fn from(v: &[u8; N]) -> Self {
+        DataProposalHash(v.to_vec())
+    }
+}
+impl DataProposalHash {
+    pub fn from_hex(s: &str) -> Result<Self, hex::FromHexError> {
+        crate::utils::decode_hex_string_checked(s).map(DataProposalHash)
+    }
+}
+
+impl std::fmt::Debug for DataProposalHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DataProposalHash({})", hex::encode(&self.0))
+    }
+}
 
 impl Hashed<DataProposalHash> for DataProposal {
     fn hashed(&self) -> DataProposalHash {
@@ -132,13 +250,18 @@ impl Hashed<DataProposalHash> for DataProposal {
             return hash.clone();
         }
         let mut hasher = Sha3_256::new();
-        if let Some(ref parent_data_proposal_hash) = self.parent_data_proposal_hash {
-            hasher.update(parent_data_proposal_hash.0.as_bytes());
+        match &self.parent_data_proposal_hash {
+            DataProposalParent::LaneRoot(lane_id) => {
+                hasher.update(lane_id.to_string().as_bytes());
+            }
+            DataProposalParent::DP(parent_data_proposal_hash) => {
+                hasher.update(&parent_data_proposal_hash.0);
+            }
         }
         for tx in self.txs.iter() {
-            hasher.update(tx.hashed().0);
+            hasher.update(&tx.hashed().0);
         }
-        let hash = DataProposalHash(hex::encode(hasher.finalize()));
+        let hash = DataProposalHash(hasher.finalize().to_vec());
         *self.hash_cache.write().unwrap() = Some(hash.clone());
         hash
     }
@@ -153,7 +276,7 @@ impl std::hash::Hash for DataProposal {
 
 impl Display for DataProposalHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", hex::encode(&self.0))
     }
 }
 impl Display for DataProposal {
@@ -162,18 +285,12 @@ impl Display for DataProposal {
     }
 }
 
-impl Display for LaneId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
 pub type PoDA = AggregateSignature;
 pub type Cut = Vec<(LaneId, DataProposalHash, LaneBytesSize, PoDA)>;
 
 impl Display for TxId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}", &self.0 .0, &self.1 .0)
+        write!(f, "{}/{}", self.0, self.1)
     }
 }
 
@@ -186,5 +303,23 @@ impl Display for CutDisplay<'_> {
             cut_str.push_str(&format!("{lane_id}:{hash}({size}), "));
         }
         write!(f, "{}", cut_str.trim_end())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn data_proposal_hash_from_hex_str_roundtrip() {
+        let hex_str = "746573745f6470";
+        let hash = DataProposalHash::from_hex(hex_str).expect("data proposal hash hex");
+        assert_eq!(hash.0, b"test_dp".to_vec());
+        assert_eq!(format!("{hash}"), hex_str);
+        let json = serde_json::to_string(&hash).expect("serialize data proposal hash");
+        assert_eq!(json, "\"746573745f6470\"");
+        let decoded: DataProposalHash =
+            serde_json::from_str(&json).expect("deserialize data proposal hash");
+        assert_eq!(decoded, hash);
     }
 }

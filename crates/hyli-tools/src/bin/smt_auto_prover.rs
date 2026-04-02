@@ -1,24 +1,23 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
-use clap::{Parser, command};
+use clap::Parser;
 
 use client_sdk::{
     contract_indexer::utoipa::OpenApi, helpers::risc0::Risc0Prover, rest_client::NodeApiHttpClient,
 };
 use hyli_contract_sdk::api::NodeInfo;
 use hyli_modules::{
-    bus::{SharedMessageBus, metrics::BusMetrics},
+    bus::SharedMessageBus,
     modules::{
-        BuildApiContextInner, ModulesHandler,
+        BuildApiContextInner, ModulesHandler, ModulesHandlerOptions,
         admin::{AdminApi, AdminApiRunContext},
-        da_listener::{DAListener, DAListenerConf},
+        contract_listener::{ContractListener, ContractListenerConf},
         prover::{AutoProver, AutoProverCtx},
         rest::{ApiDoc, RestApi, RestApiRunContext, Router},
     },
     utils::logger::setup_tracing,
 };
-use prometheus::Registry;
 use serde::{Deserialize, Serialize};
 use smt_token::client::tx_executor_handler::SmtTokenProvableState;
 
@@ -40,22 +39,9 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting smt auto prover");
 
-    let bus = SharedMessageBus::new(BusMetrics::global("smt_auto_prover".to_string()));
+    let bus = SharedMessageBus::new();
 
     tracing::info!("Setting up modules");
-
-    let registry = Registry::new();
-    // Init global metrics meter we expose as an endpoint
-    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-        .with_reader(
-            opentelemetry_prometheus::exporter()
-                .with_registry(registry.clone())
-                .build()
-                .context("starting prometheus exporter")?,
-        )
-        .build();
-
-    opentelemetry::global::set_meter_provider(provider.clone());
 
     let node_client =
         Arc::new(NodeApiHttpClient::new(config.node_url.clone()).context("build node client")?);
@@ -66,31 +52,47 @@ async fn main() -> Result<()> {
     });
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus).await;
+    let mut handler = ModulesHandler::new(
+        &bus,
+        config.data_directory.clone(),
+        ModulesHandlerOptions::default(),
+    )?;
+
+    hyli_registry::upload_elf(
+        smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF,
+        &hex::encode(smt_token::client::tx_executor_handler::metadata::PROGRAM_ID),
+        &config.contract_name,
+        "risc0",
+        None,
+    )
+    .await?;
+
+    let auto_prover_ctx = Arc::new(AutoProverCtx {
+        data_directory: config.data_directory.clone(),
+        prover: Arc::new(Risc0Prover::new(
+            smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF.to_vec(),
+            smt_token::client::tx_executor_handler::metadata::PROGRAM_ID,
+        )),
+        contract_name: config.contract_name.clone().into(),
+        node: node_client.clone(),
+        api: Some(build_api_ctx.clone()),
+        tx_buffer_size: config.tx_buffer_size,
+        max_txs_per_proof: config.max_txs_per_proof,
+        tx_working_window_size: config.tx_working_window_size,
+        idle_flush_interval: Duration::from_secs(config.idle_flush_interval_secs),
+    });
 
     handler
-        .build_module::<AutoProver<SmtTokenProvableState>>(Arc::new(AutoProverCtx {
-            data_directory: config.data_directory.clone(),
-            prover: Arc::new(Risc0Prover::new(
-                smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF,
-                smt_token::client::tx_executor_handler::metadata::PROGRAM_ID,
-            )),
-            contract_name: config.contract_name.clone().into(),
-            node: node_client.clone(),
-            api: Some(build_api_ctx.clone()),
-            default_state: Default::default(),
-            buffer_blocks: config.buffer_blocks,
-            max_txs_per_proof: config.max_txs_per_proof,
-            tx_working_window_size: config.tx_working_window_size,
-        }))
+        .build_module::<AutoProver<SmtTokenProvableState, Risc0Prover>>(auto_prover_ctx)
         .await?;
 
     handler
-        .build_module::<DAListener>(DAListenerConf {
-            start_block: None,
+        .build_module::<ContractListener>(ContractListenerConf {
+            database_url: config.database_url.clone(),
             data_directory: config.data_directory.clone(),
-            da_read_from: config.da_read_from.clone(),
-            timeout_client_secs: 10,
+            contracts: HashSet::from([config.contract_name.clone().into()]),
+            poll_interval: Duration::from_secs(config.contract_listener_poll_interval_secs),
+            replay_settled_from_start: true,
         })
         .await?;
 
@@ -118,20 +120,17 @@ async fn main() -> Result<()> {
     }
 
     handler
-        .build_module::<RestApi>(
-            RestApiRunContext::new(
-                config.rest_server_port,
-                NodeInfo {
-                    id: "smt_auto_prover".to_string(),
-                    pubkey: None,
-                    da_address: config.da_read_from.clone(),
-                },
-                router,
-                config.rest_server_max_body_size,
-                openapi,
-            )
-            .with_registry(registry),
-        )
+        .build_module::<RestApi>(RestApiRunContext::new(
+            config.rest_server_port,
+            NodeInfo {
+                id: "smt_auto_prover".to_string(),
+                pubkey: None,
+                da_address: config.da_read_from.clone(),
+            },
+            router,
+            config.rest_server_max_body_size,
+            openapi,
+        ))
         .await?;
 
     tracing::info!("Starting modules");
@@ -156,13 +155,17 @@ struct Conf {
 
     /// URL to connect to.
     pub da_read_from: String,
+    pub database_url: String,
 
-    pub buffer_blocks: u32,
+    pub tx_buffer_size: usize,
     pub max_txs_per_proof: usize,
     pub tx_working_window_size: usize,
 
     /// Contract name to prove
     pub contract_name: String,
+
+    pub contract_listener_poll_interval_secs: u64,
+    pub idle_flush_interval_secs: u64,
 
     pub rest_server_port: u16,
     pub rest_server_max_body_size: usize,

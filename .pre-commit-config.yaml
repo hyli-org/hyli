@@ -9,7 +9,7 @@ repos:
         pass_filenames: false
       - id: cargo-clippy-fix
         name: Cargo clippy fix
-        entry: cargo clippy --all-targets --all-features --workspace
+        entry: cargo clippy --all-targets -F sp1 -F risc0 --workspace
         language: system
         files: '\.rs$'
         pass_filenames: false

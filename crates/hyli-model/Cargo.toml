@@ -9,31 +9,40 @@ repository = { workspace = true }
 rust-version = "1.82"
 
 [dependencies]
-borsh = { workspace = true, features = ["derive", "rc", "std"] }
-hex = { workspace = true }
-serde = { workspace = true, features = ["derive", "rc"] }
+borsh = { workspace = true, features = ["derive", "rc"] }
+hex = { workspace = true, default-features = false, features = ["alloc"] }
+serde = { workspace = true, features = ["derive", "rc", "alloc"] }
 
 readonly = "0.2.12"
 sha3 = { workspace = true, optional = true }
 blst = { workspace = true, optional = true }
 strum_macros = { workspace = true, optional = true }
+strum = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["display"] }
 base64 = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
-sqlx = { workspace = true, features = ["postgres"], optional = true }
+sqlx = { workspace = true, features = ["postgres", "chrono"], optional = true }
 serde_with = { workspace = true, features = ["hex"], optional = true }
 serde_json = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 secp256k1 = { workspace = true, optional = true }
-strum = { workspace = true }
+hyli-bus = { workspace = true, optional = true }
+hyli-net-traits = { workspace = true, optional = true }
 
 [features]
 # disable default feature if you want minimalist definitions for contracts
-default = ["full"]
+default = ["std", "full"]
+std = [
+  "borsh/std",
+  "serde/std",
+  "hex/std",
+]
 full = [
+  "std",
   "dep:sha3",
   "dep:strum_macros",
+  "dep:strum",
   "dep:blst",
   "dep:base64",
   "dep:serde_json",
@@ -42,5 +51,7 @@ full = [
   "dep:utoipa",
   "dep:secp256k1",
   "dep:sha2",
+  "dep:hyli-net-traits",
 ]
 sqlx = ["dep:sqlx"]
+bus = ["dep:hyli-bus"]

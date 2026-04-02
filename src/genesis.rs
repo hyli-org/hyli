@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+};
 
 use crate::{model::*, p2p::network::PeerEvent, utils::conf::SharedConf};
 use anyhow::{Error, Result};
@@ -13,13 +16,12 @@ use hydentity::{
     client::tx_executor_handler::{register_identity, verify_identity},
     Hydentity,
 };
-use hyli_contract_sdk::{
-    Blob, Calldata, ContractName, Identity, ProgramId, StateCommitment, ZkContract,
-};
+use hyli_bus::{module_handle_messages, modules::ModulePersistOutput};
+use hyli_contract_sdk::{Calldata, ContractName, Identity, ProgramId, StateCommitment, ZkContract};
 use hyli_crypto::SharedBlstCrypto;
 use hyli_modules::{
     bus::{BusClientSender, BusMessage, SharedMessageBus},
-    bus_client, handle_messages, log_error,
+    handle_messages, module_bus_client,
     modules::Module,
 };
 use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
@@ -29,7 +31,7 @@ use staking::{
     client::tx_executor_handler::{delegate, deposit_for_fees, stake},
     state::Staking,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use utils::TimestampMs;
 use verifiers::NativeVerifiers;
 
@@ -41,7 +43,7 @@ pub enum GenesisEvent {
 
 impl BusMessage for GenesisEvent {}
 
-bus_client! {
+module_bus_client! {
 struct GenesisBusClient {
     sender(GenesisEvent),
     receiver(PeerEvent),
@@ -55,28 +57,49 @@ pub struct Genesis {
     bus: GenesisBusClient,
     peer_pubkey: PeerPublicKeyMap,
     crypto: SharedBlstCrypto,
+    already_handled_genesis: bool,
+    peer_timestamps: Vec<TimestampMs>,
+    start_timestamp: TimestampMs,
 }
 
 impl Module for Genesis {
     type Context = SharedRunContext;
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
+        let file = PathBuf::from("genesis.bin");
+        let already_handled_genesis: bool =
+            match Self::load_from_disk(&ctx.config.data_directory, &file)? {
+                Some(t) => t,
+                None => {
+                    warn!("Starting Genesis from default.");
+                    false
+                }
+            };
         let bus = GenesisBusClient::new_from_bus(bus.new_handle()).await;
         Ok(Genesis {
             config: ctx.config.clone(),
             bus,
             peer_pubkey: BTreeMap::new(),
             crypto: ctx.crypto.clone(),
+            already_handled_genesis,
+            peer_timestamps: Vec::new(),
+            start_timestamp: ctx.start_timestamp,
         })
     }
 
     async fn run(&mut self) -> Result<()> {
-        self.start().await
+        self.start().await?;
+        // We keep never resolving loop to keep the module alive
+        let _ = module_handle_messages! {
+            on_self self,
+        };
+        Ok(())
     }
 
-    async fn persist(&mut self) -> Result<()> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         // TODO: ideally we'd wait until everyone has processed it, as there's technically a data race.
-        let file = self.config.data_directory.clone().join("genesis.bin");
-        log_error!(Self::save_on_disk(&file, &true), "Persisting genesis state")
+        let file = PathBuf::from("genesis.bin");
+        let checksum = Self::save_on_disk(&self.config.data_directory, &file, &true)?;
+        Ok(vec![(self.config.data_directory.join(file), checksum)])
     }
 }
 
@@ -92,9 +115,7 @@ contract_states!(
 #[allow(clippy::expect_used, reason = "genesis should panic if incorrect")]
 impl Genesis {
     pub async fn start(&mut self) -> Result<(), Error> {
-        let file = self.config.data_directory.clone().join("genesis.bin");
-        let already_handled_genesis: bool = Self::load_from_disk_or_default(&file);
-        if already_handled_genesis {
+        if self.already_handled_genesis {
             debug!("🌿 Genesis block already handled, skipping");
             // TODO: do we need a different message?
             self.bus.send(GenesisEvent::NoGenesis {})?;
@@ -122,6 +143,7 @@ impl Genesis {
             self.config.id.clone(),
             self.crypto.validator_pubkey().clone(),
         );
+        self.peer_timestamps.push(self.start_timestamp.clone());
 
         // Wait until we've connected with all other genesis peers.
         // (We've already checked we're part of the stakers, so if we're alone carry on).
@@ -131,7 +153,7 @@ impl Genesis {
                 on_bus self.bus,
                 listen<PeerEvent> msg => {
                     match msg {
-                        PeerEvent::NewPeer { name, pubkey, height, .. } => {
+                        PeerEvent::NewPeer { name, pubkey, height, timestamp, .. } => {
                             if !self.config.genesis.stakers.contains_key(&name) {
                                 continue;
                             }
@@ -145,6 +167,7 @@ impl Genesis {
 
                             info!("🌱 New peer {}({}) added to genesis", &name, &pubkey);
                             self.peer_pubkey.insert(name.clone(), pubkey.clone());
+                            self.peer_timestamps.push(timestamp.clone());
 
                             // Once we know everyone in the initial quorum, craft & process the genesis block.
                             if self.peer_pubkey.len() == self.config.genesis.stakers.len() {
@@ -173,7 +196,23 @@ impl Genesis {
             }
         };
 
-        let signed_block = self.make_genesis_block(genesis_txs, initial_validators);
+        // Calculate mean timestamp from all peers (rounded)
+        let genesis_timestamp = if self.config.consensus.genesis_timestamp != 0 {
+            info!(
+                "🌱 Using configured genesis timestamp of {} ms for genesis block",
+                self.config.consensus.genesis_timestamp * 1000
+            );
+            TimestampMs((self.config.consensus.genesis_timestamp * 1000) as u128)
+        } else {
+            let sum: f64 = self.peer_timestamps.iter().map(|t| t.0 as f64).sum();
+            let mean = (sum / self.peer_timestamps.len() as f64).round();
+
+            info!("🌱 Using mean timestamp of {} ms for genesis block", mean);
+            TimestampMs(mean as u128)
+        };
+
+        let signed_block =
+            self.make_genesis_block(genesis_txs, initial_validators, genesis_timestamp);
 
         // At this point, we can setup the genesis block.
         _ = self.bus.send(GenesisEvent::GenesisBlock(signed_block));
@@ -235,12 +274,12 @@ impl Genesis {
                         .get(&ContractName("risc0-recursion".to_string()))
                         .expect("Genesis TXes on unregistered contracts")
                         .clone(),
-                    verifier: hyli_model::verifiers::RISC0_1.into(),
+                    verifier: hyli_model::verifiers::RISC0_3.into(),
                     proven_blobs: outputs
                         .drain(..)
                         .map(|(contract_name, out)| BlobProofOutput {
-                            original_proof_hash: ProofDataHash(blob_tx_hash.0.clone()),
-                            verifier: hyli_model::verifiers::RISC0_1.into(),
+                            original_proof_hash: ProofDataHash::from(blob_tx_hash.0.clone()),
+                            verifier: hyli_model::verifiers::RISC0_3.into(),
                             program_id: contract_program_ids
                                 .get(&contract_name)
                                 .expect("Genesis TXes on unregistered contracts")
@@ -250,7 +289,7 @@ impl Genesis {
                         })
                         .collect(),
                     is_recursive: true,
-                    proof_hash: ProofDataHash(blob_tx_hash.0.clone()),
+                    proof_hash: ProofDataHash::from(blob_tx_hash.0.clone()),
                     proof_size: 0,
                     proof: None,
                 }
@@ -483,6 +522,7 @@ impl Genesis {
 
             ptx.outputs[0].1.tx_hash = ptx.to_blob_tx().hashed();
             ptx.outputs[0].1.blobs = IndexedBlobs::from(ptx.blobs.clone());
+            ptx.outputs[0].1.tx_blob_count = ptx.blobs.len();
 
             let tx_hash = ptx.to_blob_tx().hashed();
             ptx.outputs.push((
@@ -584,7 +624,7 @@ impl Genesis {
         register_hyli_contract(
             &mut register_tx,
             "staking".into(),
-            hyli_model::verifiers::RISC0_1.into(),
+            hyli_model::verifiers::RISC0_3.into(),
             staking_program_id.clone().into(),
             ctx.staking.commit(),
             None,
@@ -595,7 +635,7 @@ impl Genesis {
         register_hyli_contract(
             &mut register_tx,
             "hyllar".into(),
-            hyli_model::verifiers::RISC0_1.into(),
+            hyli_model::verifiers::RISC0_3.into(),
             hyllar_program_id.clone().into(),
             ctx.hyllar.commit(),
             None,
@@ -610,7 +650,7 @@ impl Genesis {
             register_hyli_contract(
                 &mut register_tx,
                 token.into(),
-                hyli_model::verifiers::RISC0_1.into(),
+                hyli_model::verifiers::RISC0_3.into(),
                 smt_token_program_id.clone().into(),
                 StateCommitment(Into::<[u8; 32]>::into(root).to_vec()),
                 None,
@@ -622,7 +662,7 @@ impl Genesis {
         register_hyli_contract(
             &mut register_tx,
             "hydentity".into(),
-            hyli_model::verifiers::RISC0_1.into(),
+            hyli_model::verifiers::RISC0_3.into(),
             hydentity_program_id.clone().into(),
             ctx.hydentity.commit(),
             None,
@@ -633,7 +673,7 @@ impl Genesis {
         register_hyli_contract(
             &mut register_tx,
             "risc0-recursion".into(),
-            hyli_model::verifiers::RISC0_1.into(),
+            hyli_model::verifiers::RISC0_3.into(),
             hyli_contracts::RISC0_RECURSION_ID.to_vec().into(),
             StateCommitment::default(),
             None,
@@ -650,25 +690,25 @@ impl Genesis {
         &self,
         genesis_txs: Vec<Transaction>,
         initial_validators: Vec<ValidatorPublicKey>,
+        mean_timestamp: TimestampMs,
     ) -> SignedBlock {
-        let dp = DataProposal::new(None, genesis_txs);
-
         // TODO: do something better?
         let round_leader = initial_validators
             .first()
             .expect("must have round leader")
             .clone();
+        let lane_id = LaneId::new(round_leader.clone());
+        let dp = DataProposal::new_root(lane_id.clone(), genesis_txs);
 
         SignedBlock {
-            data_proposals: vec![(LaneId(round_leader.clone()), vec![dp.clone()])],
+            data_proposals: vec![(lane_id, vec![dp.clone()])],
             certificate: AggregateSignature {
                 signature: Signature("fake".into()),
                 validators: initial_validators.clone(),
             },
             consensus_proposal: ConsensusProposal {
                 slot: 0,
-                // TODO: genesis block should have a consistent, up-to-date timestamp
-                timestamp: TimestampMs((self.config.consensus.genesis_timestamp * 1000) as u128),
+                timestamp: mean_timestamp,
                 // TODO: We aren't actually storing the data proposal above, so we cannot store it here,
                 // or we might mistakenly request data from that cut, but mempool hasn't seen it.
                 // This should be fixed by storing the data proposal in mempool or handling this whole thing differently.
@@ -693,7 +733,7 @@ impl Genesis {
                         .into()
                     })
                     .collect(),
-                parent_hash: ConsensusProposalHash("genesis".into()),
+                parent_hash: b"genesis".into(),
             },
         }
     }
@@ -709,7 +749,7 @@ mod tests {
     use hyli_crypto::BlstCrypto;
     use std::sync::Arc;
 
-    bus_client! {
+    module_bus_client! {
     struct TestGenesisBusClient {
         sender(PeerEvent),
         receiver(GenesisEvent),
@@ -727,6 +767,9 @@ mod tests {
                 bus,
                 peer_pubkey: BTreeMap::new(),
                 crypto,
+                already_handled_genesis: false,
+                peer_timestamps: Vec::new(),
+                start_timestamp: TimestampMs(1000000),
             },
             test_bus,
         )
@@ -794,6 +837,7 @@ mod tests {
             pubkey: ValidatorPublicKey("aaa".into()),
             da_address: "".into(),
             height: BlockHeight(0),
+            timestamp: TimestampMs(1000000),
         })
         .expect("send");
 
@@ -831,6 +875,7 @@ mod tests {
             pubkey: node_1_pubkey.clone(),
             height: BlockHeight(0),
             da_address: "".into(),
+            timestamp: TimestampMs(1000000),
         })
         .expect("send");
 
@@ -839,7 +884,7 @@ mod tests {
 
         assert!(result.is_ok());
 
-        let rec = bus.try_recv().expect("recv");
+        let rec: GenesisEvent = bus.try_recv().expect("recv");
         assert_matches!(rec, GenesisEvent::GenesisBlock(..));
         if let GenesisEvent::GenesisBlock(signed_block) = rec {
             assert!(signed_block.has_txs());
@@ -869,8 +914,9 @@ mod tests {
             pubkey: BlstCrypto::new(name).unwrap().validator_pubkey().clone(),
             height: BlockHeight(height),
             da_address: "".into(),
+            timestamp: TimestampMs(1000000),
         };
-        let rec1 = {
+        let rec1: GenesisEvent = {
             let (mut genesis, mut bus) = new(config.clone()).await;
             bus.send(build_new_peer("node-2", 0)).expect("send");
             bus.send(build_new_peer("node-3", 0)).expect("send");
@@ -915,9 +961,10 @@ mod tests {
             pubkey: BlstCrypto::new(name).unwrap().validator_pubkey().clone(),
             height: BlockHeight(height),
             da_address: "".into(),
+            timestamp: TimestampMs(1000000),
         };
 
-        let rec1 = {
+        let rec1: GenesisEvent = {
             let (mut genesis, mut bus) = new(config.clone()).await;
             bus.send(build_new_peer("node-2", 1)).expect("send");
             bus.send(build_new_peer("node-3", 1)).expect("send");
@@ -963,6 +1010,7 @@ mod tests {
                 .clone(),
             height: BlockHeight(1),
             da_address: "".into(),
+            timestamp: TimestampMs(1000000),
         })
         .expect("send");
 
@@ -972,7 +1020,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Vérifier que l'événement reçu est NoGenesis
-        let rec = bus.try_recv().expect("recv");
+        let rec: GenesisEvent = bus.try_recv().expect("recv");
         assert_eq!(rec, GenesisEvent::NoGenesis);
     }
 
@@ -1003,6 +1051,7 @@ mod tests {
                 .clone(),
             height: BlockHeight(0),
             da_address: "".into(),
+            timestamp: TimestampMs(1000000),
         })
         .expect("send");
 
@@ -1015,6 +1064,7 @@ mod tests {
                 .clone(),
             height: BlockHeight(0),
             da_address: "".into(),
+            timestamp: TimestampMs(1000000),
         })
         .expect("send");
 
@@ -1023,7 +1073,42 @@ mod tests {
         assert!(result.is_ok());
 
         // Vérifier que l’événement attendu est bien GenesisBlock
-        let rec = bus.try_recv().expect("Expected a GenesisBlock event");
+        let rec: GenesisEvent = bus.try_recv().expect("Expected a GenesisBlock event");
         assert_matches!(rec, GenesisEvent::GenesisBlock(..));
+    }
+
+    /// Verify that all genesis blob transactions settle successfully through NodeState.
+    #[test_log::test(tokio::test)]
+    async fn test_genesis_txs_settle_successfully() {
+        use hyli_modules::node_state::{test::NodeStateBlockExt, NodeState};
+        use std::collections::HashSet;
+
+        let tmpdir = tempfile::Builder::new().tempdir().unwrap();
+        let mut config =
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+        config.id = "single-node".to_string();
+        config.consensus.solo = true;
+        config.genesis.stakers = [("single-node".into(), 100)].into_iter().collect();
+        let (mut genesis, mut bus) = new(config).await;
+
+        genesis.start().await.expect("genesis start");
+
+        let GenesisEvent::GenesisBlock(signed_block) = bus.try_recv().expect("genesis block event")
+        else {
+            panic!("Expected GenesisBlock event");
+        };
+        let mut node_state = NodeState::create("test");
+        let result = node_state
+            .handle_signed_block(signed_block.clone())
+            .expect("handle genesis block");
+
+        let blob_txs = signed_block
+            .iter_txs_with_id()
+            .filter(|(_, _, tx)| matches!(tx.transaction_data, TransactionData::Blob(_)))
+            .map(|(_, tx_id, _)| tx_id.1.clone())
+            .collect::<HashSet<_>>();
+
+        let successful_txs = result.successful_txs().into_iter().collect::<HashSet<_>>();
+        assert_eq!(successful_txs, blob_txs);
     }
 }

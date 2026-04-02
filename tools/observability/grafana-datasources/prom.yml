@@ -7,3 +7,4 @@ datasources:
     url: http://prometheus:9090
     jsonData:
       httpMethod: POST
+      timeInterval: 1s

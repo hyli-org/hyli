@@ -1,14 +1,17 @@
 use anyhow::{anyhow, Result};
-use client_sdk::contract_indexer::{
-    axum::{
-        extract::{Path, State},
-        http::StatusCode,
-        response::IntoResponse,
-        Json, Router,
+use client_sdk::{
+    contract_indexer::{
+        axum::{
+            extract::{Path, State},
+            http::StatusCode,
+            response::IntoResponse,
+            Json, Router,
+        },
+        utoipa::{openapi::OpenApi, ToSchema},
+        utoipa_axum::{router::OpenApiRouter, routes},
+        ContractHandler, ContractHandlerStore,
     },
-    utoipa::{openapi::OpenApi, ToSchema},
-    utoipa_axum::{router::OpenApiRouter, routes},
-    AppError, ContractHandler, ContractHandlerStore,
+    AppError,
 };
 use sdk::Identity;
 use serde::Serialize;

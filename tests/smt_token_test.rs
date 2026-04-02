@@ -17,7 +17,7 @@ mod e2e_smt_token {
         client::tx_executor_handler::{register_identity, verify_identity},
         Hydentity,
     };
-    use hyli_contract_sdk::{Blob, Calldata, ContractName, HyliOutput};
+    use hyli_contract_sdk::{Calldata, ContractName, HyliOutput};
     use hyli_contracts::{HYDENTITY_ELF, HYDENTITY_ID, SMT_TOKEN_ELF, SMT_TOKEN_ID};
     use smt_token::{client::tx_executor_handler::SmtTokenProvableState, FAUCET_ID};
 
@@ -48,11 +48,11 @@ mod e2e_smt_token {
             // Replace prover binaries for non-reproducible mode.
             .with_prover(
                 "hydentity".into(),
-                Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+                Risc0Prover::new(HYDENTITY_ELF.to_vec(), HYDENTITY_ID),
             )
             .with_prover(
                 "oranj".into(),
-                Risc0Prover::new(SMT_TOKEN_ELF, SMT_TOKEN_ID),
+                Risc0Prover::new(SMT_TOKEN_ELF.to_vec(), SMT_TOKEN_ID),
             )
             .build();
 
@@ -144,6 +144,7 @@ mod e2e_smt_token {
             .balances
             .get(node.pubkey.as_ref().unwrap())
             .expect("balance");
+        let initial_cumul_size: u64 = initial_balance.cumul_sizes.values().map(|v| v.0).sum();
 
         let ctx = scenario_smt_token(ctx).await?;
 
@@ -153,7 +154,8 @@ mod e2e_smt_token {
             .balances
             .get(node.pubkey.as_ref().unwrap())
             .expect("balance");
-        assert!(balance.cumul_size.0 > initial_balance.cumul_size.0);
+        let cumul_size: u64 = balance.cumul_sizes.values().map(|v| v.0).sum();
+        assert!(cumul_size > initial_cumul_size);
         assert!(balance.balance < initial_balance.balance);
 
         Ok(())

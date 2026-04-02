@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use hyli::{entrypoint::RunPg, utils::conf};
 use hyli_crypto::BlstCrypto;
-use hyli_modules::{log_error, utils::logger::setup_tracing};
+use hyli_modules::{log_error, utils::logger::setup_otlp};
 use std::sync::Arc;
 use tracing::info;
 
@@ -21,8 +21,23 @@ pub struct Args {
     #[arg(long, default_value = "config.toml")]
     pub config_file: Vec<String>,
 
+    #[arg(long, default_value = "false")]
+    pub tracing: bool,
+
     #[clap(long, action)]
     pub pg: bool,
+
+    #[clap(long, action)]
+    pub jolt: bool,
+
+    #[clap(long, action)]
+    pub sp1: bool,
+
+    #[clap(long, action)]
+    pub risc0: bool,
+
+    #[clap(long, action)]
+    pub reth: bool,
 }
 
 #[cfg(feature = "dhat")]
@@ -52,8 +67,26 @@ static GLOBAL_ALLOC: alloc_track::AllocTrack<std::alloc::System> = alloc_track::
 
 // We have some modules that have long-ish tasks, but for now we won't bother giving them
 // their own runtime, so to avoid contention we keep a safe number of worker threads
-#[tokio::main(worker_threads = 6)]
-async fn main() -> Result<()> {
+fn main() {
+    let rt = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(6)
+        .disable_lifo_slot()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(err) => {
+            eprintln!("Failed to build tokio runtime: {err}");
+            std::process::exit(1);
+        }
+    };
+
+    if let Err(err) = rt.block_on(inner_main()) {
+        eprintln!("hyli failed: {err:#}");
+        std::process::exit(1);
+    }
+}
+async fn inner_main() -> Result<()> {
     #[cfg(feature = "dhat")]
     let _profiler = {
         info!("Running with dhat memory profiler");
@@ -67,13 +100,14 @@ async fn main() -> Result<()> {
     let crypto = Arc::new(BlstCrypto::new(&config.id).context("Could not create crypto")?);
     let pubkey = Some(crypto.validator_pubkey().clone());
 
-    setup_tracing(
+    setup_otlp(
         &config.log_format,
         format!(
-            "{}({})",
+            "{}-{}",
             config.id.clone(),
             pubkey.clone().unwrap_or_default()
         ),
+        args.tracing,
     )?;
 
     info!("Loaded key {:?} for validator", pubkey);
@@ -84,9 +118,36 @@ async fn main() -> Result<()> {
         None
     };
 
-    #[cfg(feature = "sp1")]
-    {
-        hyli_verifiers::sp1_4::init();
+    if args.jolt {
+        if let Some(backend) = config.verifier_workers.backends.get_mut("jolt") {
+            backend.enabled = true;
+        } else {
+            anyhow::bail!("Jolt verifier worker backend not found in config");
+        }
+    }
+
+    if args.sp1 {
+        if let Some(backend) = config.verifier_workers.backends.get_mut("sp1") {
+            backend.enabled = true;
+        } else {
+            anyhow::bail!("SP1 verifier worker backend not found in config");
+        }
+    }
+
+    if args.risc0 {
+        if let Some(backend) = config.verifier_workers.backends.get_mut("risc0") {
+            backend.enabled = true;
+        } else {
+            anyhow::bail!("Risc0 verifier worker backend not found in config");
+        }
+    }
+
+    if args.reth {
+        if let Some(backend) = config.verifier_workers.backends.get_mut("reth") {
+            backend.enabled = true;
+        } else {
+            anyhow::bail!("Reth verifier worker backend not found in config");
+        }
     }
 
     log_error!(

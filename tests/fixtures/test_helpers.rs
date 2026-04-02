@@ -1,5 +1,4 @@
 use anyhow::Context;
-use assert_cmd::prelude::*;
 use client_sdk::{
     rest_client::{IndexerApiHttpClient, NodeApiClient},
     transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutor},
@@ -13,7 +12,7 @@ use hyli::{
 use hyli_crypto::BlstCrypto;
 use hyli_model::TxHash;
 use signal_child::signal;
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 use tempfile::TempDir;
 use tokio::process::{Child, Command};
 use tokio::{io::AsyncBufReadExt, time::timeout};
@@ -114,9 +113,9 @@ async fn stream_output<R: tokio::io::AsyncRead + Unpin>(output: R) -> anyhow::Re
     Ok(())
 }
 impl TestProcess {
-    pub fn new(command: &str, mut conf: Conf) -> Self {
+    pub fn new(command: &Path, mut conf: Conf) -> Self {
         info!("🚀 Starting process with conf: {:?}", conf);
-        let mut cargo_bin: Command = std::process::Command::cargo_bin(command).unwrap().into();
+        let mut cargo_bin = tokio::process::Command::new(command);
 
         // Create a temporary directory for the node
         let tmpdir = tempfile::Builder::new().prefix("hyli").tempdir().unwrap();
@@ -125,7 +124,8 @@ impl TestProcess {
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        conf.data_directory = tmpdir.path().to_path_buf();
+        conf.data_directory = tmpdir.path().join("data");
+        std::fs::create_dir_all(&conf.data_directory).unwrap();
         // Serialize the configuration to a file
         let conf_file = tmpdir.path().join("config.toml");
 
@@ -267,9 +267,5 @@ pub async fn send_transaction<S: StateUpdater>(
 }
 
 pub async fn find_available_port() -> u16 {
-    let listener = hyli_net::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
-    let addr = listener.local_addr().unwrap();
-    addr.port()
+    hyli_net::test_utils::find_available_port_sync()
 }

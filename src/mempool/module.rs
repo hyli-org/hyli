@@ -1,12 +1,12 @@
+use hyli_bus::modules::ModulePersistOutput;
 use hyli_modules::{log_error, module_handle_messages};
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use crate::{
     consensus::ConsensusEvent, model::*, p2p::network::MsgWithHeader, utils::conf::P2pMode,
 };
 
 use client_sdk::tcp_client::TcpServerMessage;
-use hyli_model::{DataProposalHash, LaneBytesSize, LaneId};
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use tracing::warn;
 
@@ -15,8 +15,8 @@ use super::{api::RestApiMessage, MempoolNetMessage, QueryNewCut};
 use crate::model::SharedRunContext;
 
 use super::{
-    api, mempool_bus_client::MempoolBusClient, metrics::MempoolMetrics,
-    storage_fjall::LanesStorage, Mempool, MempoolStore,
+    api, mempool_bus_client::MempoolBusClient, metrics::MempoolMetrics, shared_lanes_storage,
+    storage::Storage, Mempool, MempoolStore,
 };
 
 use anyhow::Result;
@@ -25,7 +25,7 @@ impl Module for Mempool {
     type Context = SharedRunContext;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let metrics = MempoolMetrics::global(ctx.config.id.clone());
+        let metrics = MempoolMetrics::global();
         let api = api::api(&bus, &ctx.api).await;
         if let Ok(mut guard) = ctx.api.router.lock() {
             if let Some(router) = guard.take() {
@@ -34,29 +34,32 @@ impl Module for Mempool {
         }
         let bus = MempoolBusClient::new_from_bus(bus.new_handle()).await;
 
-        let attributes = Self::load_from_disk::<MempoolStore>(
-            ctx.config.data_directory.join("mempool.bin").as_path(),
-        )
-        .unwrap_or_default();
+        let inner = match Self::load_from_disk::<MempoolStore>(
+            &ctx.config.data_directory,
+            "mempool.bin".as_ref(),
+        )? {
+            Some(s) => s,
+            None => {
+                warn!("Starting MempoolStore from default.");
+                MempoolStore::default()
+            }
+        };
 
-        let lanes_tip =
-            Self::load_from_disk::<BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>>(
-                ctx.config
-                    .data_directory
-                    .join("mempool_lanes_tip.bin")
-                    .as_path(),
-            )
-            .unwrap_or_default();
+        let mut lanes = shared_lanes_storage(&ctx.config.data_directory)?;
+        lanes.set_metrics_context(ctx.config.id.clone());
 
-        Ok(Mempool {
+        let mut mempool = Mempool {
             bus,
             file: Some(ctx.config.data_directory.clone()),
             conf: ctx.config.clone(),
             crypto: Arc::clone(&ctx.crypto),
             metrics,
-            lanes: LanesStorage::new(&ctx.config.data_directory, lanes_tip)?,
-            inner: attributes,
-        })
+            lanes,
+            proof_verifiers: Arc::clone(&ctx.proof_verifiers),
+            inner,
+        };
+        mempool.restore_inflight_work();
+        Ok(mempool)
     }
 
     async fn run(&mut self) -> Result<()> {
@@ -65,24 +68,14 @@ impl Module for Mempool {
             Duration::from_millis(500),
         );
         let mut new_dp_timer = tokio::time::interval(tick_interval);
-        // We always disseminate new data proposals, so we can run the re-dissemination timer
-        // infrequently, as it will only be useful if we had a network issue that lead
-        // to a PoDA not being created.
-        let mut disseminate_timer = tokio::time::interval(Duration::from_secs(15));
         new_dp_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        disseminate_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-
-        let sync_request_sender = self.start_mempool_sync();
+        let mut storage_metrics_ticker = tokio::time::interval(Duration::from_secs(30));
 
         // TODO: Recompute optimistic node_state for contract registrations.
         module_handle_messages! {
             on_self self,
-            delay_shutdown_until {
-                // TODO: serialize these somehow?
-                self.processing_dps.is_empty() && self.processing_txs.is_empty() && self.own_data_proposal_in_preparation.is_empty()
-            },
             listen<MsgWithHeader<MempoolNetMessage>> cmd => {
-                let _ = log_error!(self.handle_net_message(cmd, &sync_request_sender).await, "Handling MempoolNetMessage in Mempool");
+                let _ = log_error!(self.handle_net_message(cmd).await, "Handling MempoolNetMessage in Mempool");
             }
             listen<RestApiMessage> cmd => {
                 let _ = log_error!(self.handle_api_message(cmd), "Handling API Message in Mempool");
@@ -100,6 +93,10 @@ impl Module for Mempool {
                     if let Err(e) = self.staking.process_block(&block.staking_data) {
                         tracing::error!("Error processing block in mempool: {:?}", e);
                     }
+                    let _ = log_error!(
+                        self.on_lane_manager_new_block(&block),
+                        "Updating mempool after DA NewBlock"
+                    );
                 }
             }
             command_response<QueryNewCut, Cut> staking => {
@@ -108,61 +105,66 @@ impl Module for Mempool {
             Some(event) = self.inner.processing_dps.join_next() => {
                 if let Ok(event) = log_error!(event, "Processing DPs from JoinSet") {
                     if let Ok(event) = log_error!(event, "Error in running task") {
-                        let _ = log_error!(self.handle_internal_event(event),
+                        let _ = log_error!(self.handle_internal_event(event).await,
                             "Handling InternalMempoolEvent in Mempool");
                     }
                 }
             }
             // own_lane.rs code below
-            Some(Ok(tx)) = self.inner.processing_txs.join_next() => {
-                match tx {
-                    Ok(tx) => {
-                        let _ = log_error!(self.on_new_tx(tx), "Handling tx in Mempool");
+            Some(result) = self.inner.processing_txs.join_next() => {
+                let Some((_, lane_id)) = self.inner.processing_txs_pending.pop_front() else {
+                    warn!("Could not find pending TX for task");
+                    continue;
+                };
+                match result {
+                    Ok(Ok(tx)) => {
+                        let _ = log_error!(self.on_new_tx(tx, lane_id), "Handling tx in Mempool");
+                    }
+                    Ok(Err(e)) => {
+                        warn!("Error processing tx: {:?}", e);
                     }
                     Err(e) => {
-                        warn!("Error processing tx: {:?}", e);
+                        warn!("Error processing tx task: {:?}", e);
                     }
                 }
             }
             Some(own_dp) = self.inner.own_data_proposal_in_preparation.join_next() => {
-                // Fatal here, if we loose the dp in the join next error, it's lost
-                if let Ok((own_dp_hash, own_dp)) = log_error!(own_dp, "Getting result for data proposal preparation from joinset"){
-                    _ = log_error!(self.resume_new_data_proposal(own_dp, own_dp_hash).await, "Resuming own data proposal creation");
-                }
+                _ = log_error!(
+                    self.handle_own_data_proposal_preparation(own_dp).await,
+                    "Handling data proposal preparation result"
+                );
             }
             _ = new_dp_timer.tick() => {
                 _  = log_error!(self.prepare_new_data_proposal(), "Try preparing a new data proposal on tick");
             }
-            _ = disseminate_timer.tick() => {
-                if let Ok(true) = log_error!(
-                    self
-                    .redisseminate_oldest_data_proposal()
-                    .await,
-                    "Disseminate data proposals on tick"
-                ) {
-                    disseminate_timer.reset();
-                }
+            _ = storage_metrics_ticker.tick() => {
+                self.lanes.record_metrics();
             }
         };
 
         Ok(())
     }
 
-    async fn persist(&mut self) -> Result<()> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         if let Some(file) = &self.file {
-            _ = log_error!(
-                Self::save_on_disk(file.join("mempool.bin").as_path(), &self.inner),
-                "Persisting Mempool storage"
-            );
-            _ = log_error!(
-                Self::save_on_disk(
-                    file.join("mempool_lanes_tip.bin").as_path(),
-                    &self.lanes.lanes_tip
-                ),
-                "Persisting Mempool lanes tip"
-            );
+            self.lanes.persist()?;
+
+            let mempool_file = "mempool.bin";
+            let checksum = Self::save_on_disk(file, mempool_file.as_ref(), &self.inner)?;
+
+            let lanes_tip_file = "mempool_lanes_tip.bin";
+            let lanes_tip_checksum = Self::save_on_disk(
+                file,
+                lanes_tip_file.as_ref(),
+                &self.lanes.lane_tips_snapshot(),
+            )?;
+
+            return Ok(vec![
+                (file.join(mempool_file), checksum),
+                (file.join(lanes_tip_file), lanes_tip_checksum),
+            ]);
         }
 
-        Ok(())
+        Ok(vec![])
     }
 }

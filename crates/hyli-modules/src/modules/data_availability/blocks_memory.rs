@@ -25,6 +25,16 @@ impl Blocks {
         Ok(())
     }
 
+    pub fn record_metrics(&self) {}
+
+    pub fn record_op(
+        &self,
+        _op: &'static str,
+        _keyspace: &'static str,
+        _elapsed: std::time::Duration,
+    ) {
+    }
+
     pub fn put(&mut self, data: SignedBlock) -> Result<()> {
         let block_hash = data.hashed();
         if self.contains(&block_hash) {
@@ -37,6 +47,23 @@ impl Blocks {
 
     pub fn get(&self, block_hash: &ConsensusProposalHash) -> Result<Option<SignedBlock>> {
         Ok(self.data.get(block_hash).cloned())
+    }
+
+    pub fn get_by_height(&self, height: BlockHeight) -> Result<Option<SignedBlock>> {
+        let Ok(index) = self
+            .data
+            .binary_search_by(|_, block| block.height().0.cmp(&height.0))
+        else {
+            return Ok(None);
+        };
+        Ok(self.data.get_index(index).map(|(_, block)| block.clone()))
+    }
+
+    pub fn has_by_height(&self, height: BlockHeight) -> Result<bool> {
+        Ok(self
+            .data
+            .binary_search_by(|_, block| block.height().0.cmp(&height.0))
+            .is_ok())
     }
 
     pub fn contains(&mut self, block_hash: &ConsensusProposalHash) -> bool {

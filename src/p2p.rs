@@ -1,31 +1,33 @@
 //! Networking layer
 
-use std::collections::HashSet;
+use std::{collections::HashSet, path::PathBuf, time::Duration};
 
 use crate::{
     bus::BusClientSender, consensus::ConsensusNetMessage, mempool::MempoolNetMessage,
     model::SharedRunContext, utils::conf::SharedConf,
 };
 use anyhow::{bail, Context, Error, Result};
+use hyli_bus::modules::ModulePersistOutput;
 use hyli_crypto::{BlstCrypto, SharedBlstCrypto};
-use hyli_model::{BlockHeight, NodeStateEvent, ValidatorPublicKey};
+use hyli_model::{utils::TimestampMs, BlockHeight, NodeStateEvent, ValidatorPublicKey};
+use hyli_modules::telemetry::{global_meter_or_panic, Histogram, KeyValue};
 use hyli_modules::{
     bus::{BusMessage, SharedMessageBus},
     log_warn, module_handle_messages,
     modules::{module_bus_client, Module},
+    utils::tracing::extract,
 };
 use hyli_net::{
     clock::TimestampMsClock,
     tcp::{
-        p2p_server::{P2PServer, P2PServerEvent},
-        Canal,
+        p2p_server::{P2PServer, P2PServerEvent, P2PTimeouts},
+        Canal, TcpHeaders,
     },
 };
 use network::{
     IntoHeaderSignableData, MsgHeader, MsgWithHeader, NetMessage, OutboundMessage, PeerEvent,
 };
-use opentelemetry::{metrics::Histogram, InstrumentationScope};
-use tracing::{info, trace, warn};
+use tracing::{info, trace, warn, Instrument};
 
 pub mod network;
 
@@ -52,7 +54,11 @@ pub struct P2P {
     crypto: SharedBlstCrypto,
     // Metrics stuff
     netmessage_delay: Histogram<u64>,
+    start_timestamp: TimestampMs,
+    current_height: u64,
 }
+
+const P2P_HEIGHT_BIN: &str = "p2p_height.bin";
 
 impl Module for P2P {
     type Context = SharedRunContext;
@@ -60,8 +66,12 @@ impl Module for P2P {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let bus_client = P2PBusClient::new_from_bus(bus.new_handle()).await;
 
-        let scope = InstrumentationScope::builder(ctx.config.id.clone()).build();
-        let my_meter = opentelemetry::global::meter_with_scope(scope);
+        let my_meter = global_meter_or_panic();
+        let persisted_height = Self::load_from_disk::<u64>(
+            &ctx.config.data_directory,
+            PathBuf::from(P2P_HEIGHT_BIN).as_path(),
+        )?
+        .unwrap_or(0);
 
         Ok(P2P {
             config: ctx.config.clone(),
@@ -72,11 +82,20 @@ impl Module for P2P {
                 .with_description("Reception delay in milliseconds for net messages")
                 .with_unit("ms")
                 .build(),
+            start_timestamp: ctx.start_timestamp,
+            current_height: persisted_height,
         })
     }
 
     fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
         self.p2p_server()
+    }
+
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
+        let file = PathBuf::from(P2P_HEIGHT_BIN);
+        let checksum =
+            Self::save_on_disk(&self.config.data_directory, &file, &self.current_height)?;
+        Ok(vec![(self.config.data_directory.join(file), checksum)])
     }
 }
 
@@ -97,38 +116,56 @@ impl P2P {
             self.config.p2p.public_address.clone(),
             self.config.da_public_address.clone(),
             HashSet::from_iter(vec![Canal::new("mempool"), Canal::new("consensus")]),
+            P2PTimeouts {
+                poisoned_retry_interval: Duration::from_millis(
+                    self.config.p2p.timeouts.poisoned_retry_interval_ms,
+                ),
+                tcp_client_handshake_timeout: Duration::from_millis(
+                    self.config.p2p.timeouts.tcp_client_handshake_timeout_ms,
+                ),
+                tcp_send_timeout: Duration::from_millis(
+                    self.config.p2p.timeouts.tcp_send_timeout_ms,
+                ),
+                connect_retry_cooldown: Duration::from_millis(
+                    self.config.p2p.timeouts.connect_retry_cooldown_ms,
+                ),
+            },
+            self.start_timestamp.clone(),
         )
         .await?;
-
+        p2p_server.current_height = self.current_height;
         info!(
-            "📡  Starting P2P module, listening on {}",
-            self.config.p2p.public_address
+            "📡  Starting P2P module on {} with handshake height {}",
+            self.config.p2p.public_address, p2p_server.current_height
         );
 
         for peer_ip in self.config.p2p.peers.clone() {
-            _ = p2p_server.try_start_connection(peer_ip.clone(), Canal::new("mempool"));
-            _ = p2p_server.try_start_connection(peer_ip, Canal::new("consensus"));
+            p2p_server.try_start_connection(peer_ip.clone(), Canal::new("mempool"));
+            p2p_server.try_start_connection(peer_ip, Canal::new("consensus"));
         }
 
         module_handle_messages! {
             on_self self,
             listen<NodeStateEvent> NodeStateEvent::NewBlock(b) => {
-                if b.parsed_block.block_height.0 > p2p_server.current_height {
-                    p2p_server.current_height = b.parsed_block.block_height.0;
+                let height = b.signed_block.height().0;
+                if height > p2p_server.current_height {
+                    p2p_server.current_height = height;
+                    self.current_height = height;
                 }
             }
             listen<P2PCommand> cmd => {
                 match cmd {
                     P2PCommand::ConnectTo { peer } => {
-                        _ = p2p_server.try_start_connection(peer, Canal::new("consensus"));
+                        p2p_server.try_start_connection(peer, Canal::new("consensus"));
                     }
                 }
             }
-            listen<OutboundMessage> res => {
+            listen<OutboundMessage> res, span(ctx) => {
+                let _span = hyli_modules::bus::info_span_ctx!("p2p_outbound", ctx);
                 match res {
                     OutboundMessage::SendMessage { validator_id, msg }  => {
                         let canal = Self::choose_canal(&msg);
-                        if let Err(e) = p2p_server.send(validator_id.clone(), canal, msg.clone()).await {
+                        if let Err(e) = p2p_server.send(validator_id.clone(), canal, msg.clone()).instrument(_span).await {
                             self.handle_failed_send(
                                 &mut p2p_server,
                                 validator_id,
@@ -138,48 +175,49 @@ impl P2P {
                         }
                     }
                     OutboundMessage::BroadcastMessage(message) => {
+                        let _span = _span.entered();
                         let canal = Self::choose_canal(&message);
                         p2p_server.broadcast(message.clone(), canal)
                     }
                     OutboundMessage::BroadcastMessageOnlyFor(only_for, message) => {
+                        let _span = _span.entered();
                         let canal = Self::choose_canal(&message);
                         p2p_server.broadcast_only_for(&only_for, canal, message.clone())
                     }
                 };
             }
-
             p2p_tcp_event = p2p_server.listen_next() => {
                 if let Ok(Some(p2p_server_event)) = log_warn!(p2p_server.handle_p2p_tcp_event(p2p_tcp_event).await, "Handling P2PTcpEvent") {
                     match p2p_server_event {
-                        P2PServerEvent::NewPeer { name, pubkey, da_address, height } => {
+                        P2PServerEvent::NewPeer { name, pubkey, da_address, height, start_timestamp } => {
                             let _ = log_warn!(self.bus.send(PeerEvent::NewPeer {
                                 name,
                                 pubkey,
                                 da_address,
-                                height: BlockHeight(height)
+                                height: BlockHeight(height),
+                                timestamp: start_timestamp,
                             }), "Sending new peer event");
                         },
-                        P2PServerEvent::P2PMessage { msg: net_message } => {
-                            let _ = log_warn!(self.handle_net_message(net_message).await, "Handling P2P net message");
+                        P2PServerEvent::P2PMessage { msg: net_message, headers } => {
+                            let _ = log_warn!(self.handle_net_message(net_message, headers).await, "Handling P2P net message");
                         },
                     }
                 }
             }
         };
+        // Preserve the latest observed handshake height for module persistence.
+        self.current_height = p2p_server.current_height;
         Ok(())
     }
 
     fn verify_msg_header<T: std::fmt::Debug + IntoHeaderSignableData>(
-        msg: MsgWithHeader<T>,
+        msg: &MsgWithHeader<T>,
     ) -> Result<()> {
         // Ignore messages that seem incorrectly timestamped (1h ahead or back)
         if msg.header.msg.timestamp.abs_diff(TimestampMsClock::now().0) > 3_600_000 {
             bail!("Message timestamp too far from current time");
         }
-        let result = BlstCrypto::verify(&msg.header)?;
-        if !result {
-            bail!("Invalid header signature for message {:?}", msg);
-        }
+        BlstCrypto::verify(&msg.header)?;
         // Verify the message matches the signed data
         if msg.header.msg.hash != msg.msg.to_header_signable_data() {
             bail!("Invalid signed hash for message {:?}", msg);
@@ -196,18 +234,22 @@ impl P2P {
         self.netmessage_delay.record(
             header.timestamp.abs_diff(TimestampMsClock::now().0) as u64,
             &[
-                opentelemetry::KeyValue::new("msg_type", msg_type),
-                opentelemetry::KeyValue::new("validator_pubkey", validator.to_string()),
+                KeyValue::new("msg_type", msg_type),
+                KeyValue::new("validator_pubkey", validator.to_string()),
             ],
         );
     }
 
-    async fn handle_net_message(&mut self, msg: NetMessage) -> Result<(), Error> {
+    async fn handle_net_message(
+        &mut self,
+        msg: NetMessage,
+        headers: TcpHeaders,
+    ) -> Result<(), Error> {
         trace!("RECV: {:?}", msg);
         match msg {
             NetMessage::MempoolMessage(mempool_msg) => {
                 trace!("Received new mempool net message {}", mempool_msg.msg);
-                Self::verify_msg_header(mempool_msg.clone())?;
+                Self::verify_msg_header(&mempool_msg)?;
                 self.log_message_delay(
                     &mempool_msg.header.signature.validator,
                     &mempool_msg.header.msg,
@@ -219,14 +261,14 @@ impl P2P {
             }
             NetMessage::ConsensusMessage(consensus_msg) => {
                 trace!("Received new consensus net message {:?}", consensus_msg);
-                Self::verify_msg_header(consensus_msg.clone())?;
+                Self::verify_msg_header(&consensus_msg)?;
                 self.log_message_delay(
                     &consensus_msg.header.signature.validator,
                     &consensus_msg.header.msg,
                     "consensus",
                 );
                 self.bus
-                    .send(consensus_msg)
+                    .send_with_context(consensus_msg, extract(headers))
                     .context("Receiving consensus net message")?;
             }
         }
@@ -255,36 +297,47 @@ impl P2P {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::LaneId;
     use crate::p2p::network::{HeaderSignableData, HeaderSigner};
     use assertables::assert_err;
 
     #[tokio::test]
     async fn test_invalid_net_messages() -> Result<()> {
         let crypto2 = BlstCrypto::new("2").unwrap();
+        let lane_id = LaneId::new(crypto2.validator_pubkey().clone());
 
         // Test message with timestamp too far in future
-        let mut bad_time_msg =
-            crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(None, None))?;
+        let mut bad_time_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(
+            lane_id.clone(),
+            None,
+            None,
+        ))?;
         bad_time_msg.header.msg.timestamp = TimestampMsClock::now().0 + 7200000; // 2h in future
-        assert_err!(P2P::verify_msg_header(bad_time_msg.clone()));
+        assert_err!(P2P::verify_msg_header(&bad_time_msg));
 
         // Test message with timestamp too far in past
-        let mut bad_time_msg =
-            crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(None, None))?;
-        bad_time_msg.header.msg.timestamp = TimestampMsClock::now().0 - 7200000; // 2h in future
-        assert_err!(P2P::verify_msg_header(bad_time_msg.clone()));
+        let mut bad_time_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(
+            lane_id.clone(),
+            None,
+            None,
+        ))?;
+        bad_time_msg.header.msg.timestamp = TimestampMsClock::now().0 - 7200000; // 2h in past
+        assert_err!(P2P::verify_msg_header(&bad_time_msg));
 
         // Test message with bad signature
-        let mut bad_sig_msg =
-            crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(None, None))?;
+        let mut bad_sig_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(
+            lane_id.clone(),
+            None,
+            None,
+        ))?;
         bad_sig_msg.header.signature.signature.0 = vec![0, 1, 2, 3]; // Invalid signature bytes
-        assert_err!(P2P::verify_msg_header(bad_sig_msg.clone()));
+        assert_err!(P2P::verify_msg_header(&bad_sig_msg));
 
         // Test message with mismatched hash
         let mut bad_hash_msg =
-            crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(None, None))?;
+            crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(lane_id, None, None))?;
         bad_hash_msg.header.msg.hash = HeaderSignableData(vec![9, 9, 9]); // Wrong hash
-        assert_err!(P2P::verify_msg_header(bad_hash_msg.clone()));
+        assert_err!(P2P::verify_msg_header(&bad_hash_msg));
 
         Ok(())
     }

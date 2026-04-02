@@ -2,17 +2,18 @@
 
 use super::metrics::NodeStateMetrics;
 use super::{NodeState, NodeStateStore};
+use crate::bus::BusClientSender;
 use crate::bus::SharedMessageBus;
-use crate::bus::{command_response::Query, BusClientSender};
 use crate::module_handle_messages;
 use crate::modules::admin::{QueryNodeStateStore, QueryNodeStateStoreResponse};
 use crate::modules::files::NODE_STATE_BIN;
 use crate::modules::{module_bus_client, Module, SharedBuildApiCtx};
 use crate::{log_error, log_warn};
 use anyhow::Result;
+use hyli_bus::modules::ModulePersistOutput;
 use sdk::*;
 use std::path::PathBuf;
-use tracing::info;
+use tracing::{info, warn};
 
 /// NodeStateModule maintains a NodeState,
 /// listens to DA, and sends events when it has processed blocks.
@@ -43,12 +44,12 @@ module_bus_client! {
 pub struct NodeStateBusClient {
     sender(NodeStateEvent),
     receiver(DataEvent),
-    receiver(Query<ContractName, (BlockHeight, Contract)>),
-    receiver(Query<QuerySettledHeight, BlockHeight>),
-    receiver(Query<QueryUnsettledTxCount, u64>),
-    receiver(Query<QueryBlockHeight , BlockHeight>),
-    receiver(Query<QueryUnsettledTx, UnsettledBlobTransaction>),
-    receiver(Query<QueryNodeStateStore, QueryNodeStateStoreResponse>),
+    query(ContractName, (BlockHeight, Contract)),
+    query(QuerySettledHeight, BlockHeight),
+    query(QueryUnsettledTxCount, u64),
+    query(QueryBlockHeight, BlockHeight),
+    query(QueryUnsettledTx, UnsettledBlobTransaction),
+    query(QueryNodeStateStore, QueryNodeStateStoreResponse),
 }
 }
 
@@ -68,11 +69,18 @@ impl Module for NodeStateModule {
                 guard.replace(router.nest("/v1/", api));
             }
         }
-        let metrics = NodeStateMetrics::global(ctx.node_id.clone(), "node_state");
+        let metrics = NodeStateMetrics::global("node_state");
 
-        let store = Self::load_from_disk_or_default::<NodeStateStore>(
-            ctx.data_directory.join(NODE_STATE_BIN).as_path(),
-        );
+        let store = match Self::load_from_disk::<NodeStateStore>(
+            &ctx.data_directory,
+            NODE_STATE_BIN.as_ref(),
+        )? {
+            Some(s) => s,
+            None => {
+                warn!("Starting NodeModule's NodeStateStore from default.");
+                NodeStateStore::default()
+            }
+        };
 
         for name in store.contracts.keys() {
             info!("📝 Loaded contract state for {}", name);
@@ -106,7 +114,7 @@ impl Module for NodeStateModule {
                     Err(anyhow::anyhow!("Contract {} not found", cmd.0))
                 } else {
                     let height = self.inner.unsettled_transactions.get_earliest_unsettled_height(&cmd.0).unwrap_or(self.inner.current_height);
-                    Ok(BlockHeight(height.0 - 1))
+                    Ok(BlockHeight(height.0.saturating_sub(1)))
                 }
             }
             command_response<QueryUnsettledTxCount, u64> cmd => {
@@ -143,14 +151,11 @@ impl Module for NodeStateModule {
         Ok(())
     }
 
-    async fn persist(&mut self) -> Result<()> {
-        log_error!(
-            Self::save_on_disk::<NodeStateStore>(
-                self.data_directory.join(NODE_STATE_BIN).as_path(),
-                &self.inner,
-            ),
-            "Saving node state"
-        )
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
+        let file = PathBuf::from(NODE_STATE_BIN);
+        let checksum =
+            Self::save_on_disk::<NodeStateStore>(&self.data_directory, &file, &self.inner)?;
+        Ok(vec![(self.data_directory.join(file), checksum)])
     }
 }
 

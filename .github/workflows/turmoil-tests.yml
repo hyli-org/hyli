@@ -2,23 +2,26 @@ name: Run Turmoil Tests
 
 on:
   workflow_dispatch: {}
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-turmoil:
-    runs-on: ubuntu-latest
-
+    runs-on: arc-runner-set
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Run turmoil tests - Basic
         run: cargo test turmoil_simulation_basic --features turmoil
@@ -32,4 +35,11 @@ jobs:
         run: cargo test turmoil_simulation_slow_node --features turmoil
       - name: Run turmoil tests - 2 Slow Nodes
         run: cargo test turmoil_simulation_two_slow_nodes --features turmoil
-
+      - name: Run turmoil tests - Partition
+        run: cargo test turmoil_simulation_partition --features turmoil
+      - name: Run turmoil tests - Drop Storm
+        run: cargo test turmoil_simulation_drop_storm --features turmoil
+      - name: Run turmoil tests - Restart Node
+        run: cargo test turmoil_simulation_restart_node --features turmoil
+      - name: Run turmoil tests - Realistic Network
+        run: cargo test turmoil_simulation_realistic_network --features turmoil

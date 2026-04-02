@@ -1,6 +1,8 @@
 use std::{future::Future, time::Duration};
 
 use anyhow::{Context, Result};
+#[cfg(feature = "instrumentation")]
+use axum::http;
 use bytes::Buf;
 use http_body_util::BodyExt;
 use hyper::{body::Incoming, client::conn::http1, Method, Request, Response, Uri};
@@ -8,9 +10,12 @@ use hyper_util::rt::TokioIo;
 use serde::{de::DeserializeOwned, Serialize};
 use tracing::{error, warn};
 
+pub use hyper::http::StatusCode;
+
 pub enum ContentType {
     Text,
     Json,
+    OctetStream,
 }
 
 #[derive(Clone)]
@@ -20,6 +25,10 @@ pub struct HttpClient {
     pub retry: Option<(usize, Duration)>,
 }
 impl HttpClient {
+    #[cfg_attr(
+        feature = "instrumentation",
+        tracing::instrument(skip(self, body, content_type))
+    )]
     pub async fn request<T>(
         &self,
         endpoint: &str,
@@ -53,6 +62,7 @@ impl HttpClient {
         let content_type_header = match content_type {
             ContentType::Text => "application/text",
             ContentType::Json => "application/json",
+            ContentType::OctetStream => "application/octet-stream",
         };
 
         let mut req_builder = Request::builder()
@@ -62,6 +72,15 @@ impl HttpClient {
 
         if let Some(ref key) = self.api_key {
             req_builder = req_builder.header("X-API-KEY", key);
+        }
+
+        #[cfg(feature = "instrumentation")]
+        if let Some(headers) = req_builder.headers_mut() {
+            opentelemetry::global::get_text_map_propagator(|propagator| {
+                use tracing_opentelemetry::OpenTelemetrySpanExt;
+                let context = tracing::Span::current().context();
+                propagator.inject_context(&context, &mut HeaderMapInjector(headers))
+            });
         }
 
         let request = if let Some(b) = body {
@@ -86,14 +105,16 @@ impl HttpClient {
     }
 
     async fn parse_response_text(response: Response<Incoming>) -> anyhow::Result<String> {
-        let body = response.into_body();
-
-        let response = body.collect().await.context("Collecting body bytes")?;
-
-        let str_bytes: bytes::Bytes = response.to_bytes();
+        let str_bytes = Self::parse_response_bytes(response).await?;
         let str = String::from_utf8(str_bytes.to_vec())?;
 
         Ok(str)
+    }
+
+    async fn parse_response_bytes(response: Response<Incoming>) -> anyhow::Result<bytes::Bytes> {
+        let body = response.into_body();
+        let response = body.collect().await.context("Collecting body bytes")?;
+        Ok(response.to_bytes())
     }
 
     async fn parse_response_json<T: serde::de::DeserializeOwned>(
@@ -158,11 +179,20 @@ impl HttpClient {
 
     pub async fn get_str(&self, endpoint: &str) -> anyhow::Result<String> {
         let do_request = async || {
-            self.request::<String>(endpoint, Method::GET, ContentType::Text, None)
+            self.request::<String>(endpoint, Method::GET, ContentType::OctetStream, None)
                 .await
         };
         let response = self.retry(do_request).await?;
         Self::parse_response_text(response).await
+    }
+
+    pub async fn get_bytes(&self, endpoint: &str) -> anyhow::Result<bytes::Bytes> {
+        let do_request = async || {
+            self.request::<String>(endpoint, Method::GET, ContentType::Text, None)
+                .await
+        };
+        let response = self.retry(do_request).await?;
+        Self::parse_response_bytes(response).await
     }
 
     pub async fn post_json<T, R>(&self, endpoint: &str, body: &T) -> anyhow::Result<R>
@@ -176,5 +206,27 @@ impl HttpClient {
         };
         let response = self.retry(do_request).await?;
         Self::parse_response_json(response).await
+    }
+}
+
+#[cfg(feature = "instrumentation")]
+struct HeaderMapInjector<'a>(&'a mut http::HeaderMap);
+
+#[cfg(feature = "instrumentation")]
+impl opentelemetry::propagation::Injector for HeaderMapInjector<'_> {
+    fn set(&mut self, key: &str, value: String) {
+        use axum::http::{HeaderName, HeaderValue};
+
+        match HeaderName::from_bytes(key.as_bytes()) {
+            Ok(key) => match HeaderValue::try_from(&value) {
+                Ok(value) => {
+                    self.0.insert(key, value);
+                }
+
+                Err(error) => warn!(value, error =? error, "parse metadata value"),
+            },
+
+            Err(error) => warn!(key, error =? error, "parse metadata key"),
+        }
     }
 }

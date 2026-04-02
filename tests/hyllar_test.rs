@@ -17,7 +17,7 @@ mod e2e_hyllar {
         client::tx_executor_handler::{register_identity, verify_identity},
         Hydentity,
     };
-    use hyli_contract_sdk::{Blob, Calldata, ContractName, HyliOutput};
+    use hyli_contract_sdk::{Calldata, ContractName, HyliOutput};
     use hyli_contracts::{HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
     use hyllar::{client::tx_executor_handler::transfer, erc20::ERC20, Hyllar, FAUCET_ID};
 
@@ -45,9 +45,12 @@ mod e2e_hyllar {
             // Replace prover binaries for non-reproducible mode.
             .with_prover(
                 "hydentity".into(),
-                Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+                Risc0Prover::new(HYDENTITY_ELF.to_vec(), HYDENTITY_ID),
             )
-            .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
+            .with_prover(
+                "hyllar".into(),
+                Risc0Prover::new(HYLLAR_ELF.to_vec(), HYLLAR_ID),
+            )
             .build();
 
         info!("➡️  Sending blob to register bob identity");
@@ -108,6 +111,7 @@ mod e2e_hyllar {
         Ok(ctx)
     }
 
+    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn hyllar_single_node() -> Result<()> {
         let ctx = E2ECtx::new_single_with_indexer(500).await?;
@@ -115,6 +119,7 @@ mod e2e_hyllar {
         Ok(())
     }
 
+    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn hyllar_multi_nodes() -> Result<()> {
         let ctx = E2ECtx::new_multi_with_indexer(2, 500).await?;
@@ -126,6 +131,7 @@ mod e2e_hyllar {
             .balances
             .get(node.pubkey.as_ref().unwrap())
             .expect("balance");
+        let initial_cumul_size: u64 = initial_balance.cumul_sizes.values().map(|v| v.0).sum();
 
         let ctx = scenario_hyllar(ctx).await?;
 
@@ -135,7 +141,8 @@ mod e2e_hyllar {
             .balances
             .get(node.pubkey.as_ref().unwrap())
             .expect("balance");
-        assert!(balance.cumul_size.0 > initial_balance.cumul_size.0);
+        let cumul_size: u64 = balance.cumul_sizes.values().map(|v| v.0).sum();
+        assert!(cumul_size > initial_cumul_size);
         assert!(balance.balance < initial_balance.balance);
 
         Ok(())

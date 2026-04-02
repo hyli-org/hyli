@@ -1,10 +1,12 @@
-use super::{ExplorerApiState, TxHashDb};
-use api::{APIContract, APIContractState};
+use super::ExplorerApiState;
+use api::{APIContract, APIContractHistory, APIContractState, ContractChangeType};
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
+use serde::Deserialize;
+use serde_json::Value;
 
 use crate::model::*;
 use hyli_modules::log_error;
@@ -12,11 +14,12 @@ use hyli_modules::log_error;
 #[derive(sqlx::FromRow, Debug)]
 pub struct ContractDb {
     // Struct for the contracts table
-    pub tx_hash: TxHashDb,   // Corresponds to the registration transaction hash
+    pub tx_hash: TxHash,     // Corresponds to the registration transaction hash
     pub verifier: String,    // Verifier of the contract
     pub program_id: Vec<u8>, // Program ID
     pub state_commitment: Vec<u8>, // state commitment of the contract
-    pub timeout_window: TimeoutWindowDb, // state commitment of the contract
+    pub soft_timeout: Option<i64>,
+    pub hard_timeout: Option<i64>,
     pub contract_name: String, // Contract name
     #[sqlx(try_from = "i64")]
     pub total_tx: u64, // Total number of transactions associated with the contract
@@ -28,7 +31,7 @@ pub struct ContractDb {
 impl From<ContractDb> for APIContract {
     fn from(val: ContractDb) -> Self {
         APIContract {
-            tx_hash: val.tx_hash.0,
+            tx_hash: val.tx_hash,
             verifier: val.verifier,
             program_id: val.program_id,
             state_commitment: val.state_commitment,
@@ -77,7 +80,7 @@ SELECT
     COUNT(t.*) FILTER (WHERE t.transaction_status = 'sequenced') AS unsettled_tx,
     min(t.block_height) FILTER (WHERE t.transaction_status = 'sequenced') as earliest_unsettled
 FROM contracts AS c
-LEFT JOIN txs_contracts as tx_c
+LEFT JOIN txs_contracts_sequenced as tx_c
     on tx_c.contract_name = c.contract_name
 LEFT JOIN transactions AS t
     ON t.parent_dp_hash = tx_c.parent_dp_hash
@@ -119,19 +122,16 @@ pub async fn get_contract(
           COUNT(t.*)
             FILTER (WHERE t.transaction_status = 'sequenced')   AS unsettled_tx,
           (
-            SELECT min(bl.height)
-            FROM blocks bl
-            JOIN transactions t2 ON t2.block_hash = bl.hash
+            SELECT min(tx_c2.block_height)
+            FROM txs_contracts_sequenced tx_c2
+            JOIN transactions t2
+              ON t2.parent_dp_hash = tx_c2.parent_dp_hash
+             AND t2.tx_hash = tx_c2.tx_hash
             WHERE t2.transaction_status = 'sequenced'
-              AND EXISTS (
-                SELECT 1 FROM blobs b2
-                WHERE b2.parent_dp_hash = t2.parent_dp_hash
-                  AND b2.tx_hash = t2.tx_hash
-                  AND b2.contract_name = c.contract_name
-              )
+              AND tx_c2.contract_name = c.contract_name
           ) AS earliest_unsettled
         FROM contracts AS c
-        left join txs_contracts as tx_c
+        left join txs_contracts_sequenced as tx_c
           on tx_c.contract_name = c.contract_name
         LEFT JOIN transactions AS t
           ON t.parent_dp_hash = tx_c.parent_dp_hash
@@ -154,63 +154,156 @@ pub async fn get_contract(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TimeoutWindowDb(pub TimeoutWindow);
-
-impl From<TimeoutWindow> for TimeoutWindowDb {
-    fn from(tw: TimeoutWindow) -> Self {
-        TimeoutWindowDb(tw)
-    }
+#[derive(sqlx::FromRow, Debug)]
+pub struct ContractHistoryDb {
+    pub contract_name: String,
+    #[sqlx(try_from = "i64")]
+    pub block_height: u64,
+    pub tx_index: i32,
+    pub change_type: Vec<ContractChangeType>,
+    pub verifier: String,
+    pub program_id: Vec<u8>,
+    pub state_commitment: Vec<u8>,
+    pub soft_timeout: Option<i64>,
+    pub hard_timeout: Option<i64>,
+    pub tx_hash: TxHash,
+    pub parent_dp_hash: DataProposalHash,
 }
 
-impl From<TimeoutWindowDb> for TimeoutWindow {
-    fn from(tw_db: TimeoutWindowDb) -> Self {
-        tw_db.0
-    }
-}
-
-impl sqlx::Type<sqlx::Postgres> for TimeoutWindowDb {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <i64 as sqlx::Type<sqlx::Postgres>>::type_info()
-    }
-
-    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
-        <i64 as sqlx::Type<sqlx::Postgres>>::compatible(ty)
-    }
-}
-
-impl sqlx::Encode<'_, sqlx::Postgres> for TimeoutWindowDb {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync + 'static>> {
-        match &self.0 {
-            TimeoutWindow::NoTimeout => Ok(sqlx::encode::IsNull::Yes),
-            TimeoutWindow::Timeout(height) => {
-                let val: i64 = height
-                    .0
-                    .try_into()
-                    .map_err(|_| format!("BlockHeight value {} overflows i64", height.0))?;
-                <i64 as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&val, buf)
-            }
+impl From<ContractHistoryDb> for APIContractHistory {
+    fn from(val: ContractHistoryDb) -> Self {
+        APIContractHistory {
+            contract_name: val.contract_name,
+            block_height: val.block_height,
+            tx_index: val.tx_index,
+            change_type: val.change_type,
+            verifier: val.verifier,
+            program_id: val.program_id,
+            state_commitment: val.state_commitment,
+            soft_timeout: val.soft_timeout,
+            hard_timeout: val.hard_timeout,
+            tx_hash: val.tx_hash,
+            parent_dp_hash: val.parent_dp_hash,
         }
     }
 }
 
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for TimeoutWindowDb {
-    fn decode(
-        value: sqlx::postgres::PgValueRef<'r>,
-    ) -> Result<TimeoutWindowDb, Box<dyn std::error::Error + Send + Sync + 'static>> {
-        let opt_val: Option<i64> = sqlx::Decode::<sqlx::Postgres>::decode(value)?;
-        let tw = match opt_val {
-            None => TimeoutWindow::NoTimeout,
-            Some(val) => {
-                if val < 0 {
-                    return Err(format!("Negative BlockHeight not allowed: {val}").into());
-                }
-                TimeoutWindow::Timeout(BlockHeight(val as u64))
+#[derive(Debug, Deserialize)]
+pub struct ContractHistoryQuery {
+    pub change_type: Option<String>,
+    pub from_height: Option<i64>,
+    pub to_height: Option<i64>,
+}
+
+#[utoipa::path(
+    get,
+    tag = "Indexer",
+    params(
+        ("contract_name" = String, Path, description = "Contract name"),
+        ("change_type" = Option<String>, Query, description = "Filter by change type (comma-separated)"),
+        ("from_height" = Option<i64>, Query, description = "Start block height"),
+        ("to_height" = Option<i64>, Query, description = "End block height"),
+    ),
+    path = "/contract/{contract_name}/history",
+    responses(
+        (status = OK, body = [APIContractHistory])
+    )
+)]
+pub async fn get_contract_history(
+    Path(contract_name): Path<String>,
+    Query(query): Query<ContractHistoryQuery>,
+    State(state): State<ExplorerApiState>,
+) -> Result<Json<Vec<APIContractHistory>>, StatusCode> {
+    let change_types = match query.change_type.as_deref().map(|value| {
+        value
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(|item| {
+                serde_json::from_value::<ContractChangeType>(Value::String(item.to_string())).ok()
+            })
+            .collect::<Vec<_>>()
+    }) {
+        Some(values) => {
+            if values.iter().any(|item| item.is_none()) {
+                return Err(StatusCode::BAD_REQUEST);
             }
-        };
-        Ok(TimeoutWindowDb(tw))
+            let parsed = values.into_iter().flatten().collect::<Vec<_>>();
+            if parsed.is_empty() {
+                None
+            } else {
+                Some(parsed)
+            }
+        }
+        None => None,
+    };
+
+    let mut sql = String::from(
+        r#"
+        SELECT
+            contract_name,
+            block_height,
+            tx_index,
+            change_type,
+            verifier,
+            program_id,
+            state_commitment,
+            soft_timeout,
+            hard_timeout,
+            tx_hash,
+            parent_dp_hash
+        FROM contract_history
+        WHERE contract_name = $1
+        "#,
+    );
+
+    let mut param_count = 1;
+
+    if change_types
+        .as_ref()
+        .map(|types| !types.is_empty())
+        .unwrap_or(false)
+    {
+        param_count += 1;
+        sql.push_str(&format!(
+            " AND change_type && ${param_count}::contract_change_type[]"
+        ));
     }
+
+    if query.from_height.is_some() {
+        param_count += 1;
+        sql.push_str(&format!(" AND block_height >= ${param_count}"));
+    }
+
+    if query.to_height.is_some() {
+        param_count += 1;
+        sql.push_str(&format!(" AND block_height <= ${param_count}"));
+    }
+
+    sql.push_str(" ORDER BY block_height DESC, tx_index DESC");
+
+    let mut query_builder = sqlx::query_as::<_, ContractHistoryDb>(&sql).bind(contract_name);
+
+    if let Some(change_types) = change_types {
+        query_builder = query_builder.bind(change_types);
+    }
+
+    if let Some(from_height) = query.from_height {
+        query_builder = query_builder.bind(from_height);
+    }
+
+    if let Some(to_height) = query.to_height {
+        query_builder = query_builder.bind(to_height);
+    }
+
+    let history = log_error!(
+        query_builder.fetch_all(&state.db).await.map(|db| db
+            .into_iter()
+            .map(Into::<APIContractHistory>::into)
+            .collect()),
+        "Failed to fetch contract history"
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(history))
 }

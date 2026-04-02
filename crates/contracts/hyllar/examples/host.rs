@@ -34,7 +34,7 @@ async fn main() {
         private_input: vec![],
     };
 
-    let prover = Risc0Prover::new(HYLLAR_ELF, PROGRAM_ID);
+    let prover = Risc0Prover::new(HYLLAR_ELF.to_vec(), PROGRAM_ID);
     let proof = prover.prove(commitment_metadata, vec![calldata]).await;
 
     if let Err(err) = proof {

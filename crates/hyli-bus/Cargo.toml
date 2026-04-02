@@ -1,0 +1,47 @@
+[package]
+name = "hyli-bus"
+description = "Message bus and module system for Hyli"
+license-file = { workspace = true }
+version = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+rust-version = { workspace = true }
+
+[dependencies]
+hyli-turmoil-shims = { workspace = true, features = ["opentelemetry"] }
+anyhow = { workspace = true }
+anymap = { workspace = true }
+borsh = { workspace = true, features = ["derive", "std"] }
+crc32fast = { workspace = true }
+futures = { workspace = true }
+paste = { workspace = true }
+rand = { workspace = true }
+syn = { workspace = true }
+quote = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = [
+  "ansi",
+  "env-filter",
+  "fmt",
+  "json",
+] }
+
+tokio = { workspace = true, features = ["full", "tracing"] }
+
+opentelemetry = { workspace = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true, features = ["rt-tokio", "experimental_metrics_periodicreader_with_async_runtime"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+test-log = { workspace = true, features = ["color", "trace"] }
+
+[features]
+instrumentation = [
+  "dep:opentelemetry-otlp",
+  "dep:tracing-opentelemetry",
+  "dep:opentelemetry_sdk",
+]
+turmoil = ["hyli-turmoil-shims/turmoil"]

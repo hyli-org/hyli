@@ -18,7 +18,7 @@ impl HyllarTestContract {
 
 impl E2EContract for HyllarTestContract {
     fn verifier() -> Verifier {
-        hyli_model::verifiers::RISC0_1.into()
+        hyli_model::verifiers::RISC0_3.into()
     }
 
     fn program_id() -> ProgramId {
@@ -35,7 +35,7 @@ pub struct AmmTestContract {}
 
 impl E2EContract for AmmTestContract {
     fn verifier() -> Verifier {
-        hyli_model::verifiers::RISC0_1.into()
+        hyli_model::verifiers::RISC0_3.into()
     }
 
     fn program_id() -> ProgramId {

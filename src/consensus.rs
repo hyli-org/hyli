@@ -20,12 +20,13 @@ use hyli_crypto::BlstCrypto;
 use hyli_crypto::SharedBlstCrypto;
 use hyli_model::utils::TimestampMs;
 use hyli_modules::bus::BusMessage;
+use hyli_modules::info_span_ctx;
 use hyli_modules::modules::admin::{
     QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse,
 };
 use hyli_modules::{log_error, module_bus_client, module_handle_messages, modules::Module};
 use hyli_net::clock::TimestampMsClock;
-use metrics::ConsensusMetrics;
+use metrics::{ConsensusMetrics, ConsensusStateMetric};
 use role_follower::FollowerState;
 use role_leader::LeaderState;
 use role_timeout::TimeoutRoleState;
@@ -34,8 +35,7 @@ use staking::state::{Staking, MIN_STAKE};
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::time::Duration;
-use std::{collections::HashMap, default::Default, path::PathBuf};
-use tokio::time::interval;
+use std::{collections::HashMap, collections::VecDeque, default::Default, path::PathBuf};
 use tracing::{debug, info, trace};
 
 pub mod api;
@@ -55,7 +55,6 @@ pub use network::*;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ConsensusCommand {
-    TimeoutTick,
     StartNewSlot(Option<TimestampMs>), // If none, may delay, if some, may delay up to that timestamp
 }
 
@@ -93,9 +92,9 @@ receiver(ConsensusCommand),
 receiver(GenesisEvent),
 receiver(NodeStateEvent),
 receiver(MsgWithHeader<ConsensusNetMessage>),
-receiver(Query<QueryConsensusInfo, ConsensusInfo>),
-receiver(Query<QueryConsensusStakingState, Staking>),
-receiver(Query<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse>),
+query(QueryConsensusInfo, ConsensusInfo),
+query(QueryConsensusStakingState, Staking),
+query(QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse),
 }
 }
 
@@ -120,7 +119,7 @@ pub struct BFTRoundState {
     state_tag: StateTag,
 }
 
-#[derive(BorshSerialize, BorshDeserialize, Default, Debug)]
+#[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone, Copy, PartialEq, Eq)]
 enum StateTag {
     #[default]
     Joining,
@@ -142,6 +141,7 @@ pub struct ConsensusStore {
     bft_round_state: BFTRoundState,
     /// Validators that asked to be part of consensus
     validator_candidates: Vec<SignedByValidator<ValidatorCandidacy>>,
+    recent_timeout_certificates: VecDeque<TimeoutCertificateCacheEntry>,
 }
 
 pub struct Consensus {
@@ -152,6 +152,14 @@ pub struct Consensus {
     #[allow(dead_code)]
     config: SharedConf,
     crypto: SharedBlstCrypto,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Clone, Debug)]
+struct TimeoutCertificateCacheEntry {
+    slot: Slot,
+    view: View,
+    timeout_qc: TimeoutQC,
+    tc_kind: TCKind,
 }
 
 impl Deref for Consensus {
@@ -190,6 +198,78 @@ macro_rules! current_proposal {
 pub(crate) use current_proposal;
 
 impl Consensus {
+    fn set_state_tag(&mut self, state_tag: StateTag) {
+        self.bft_round_state.state_tag = state_tag;
+        self.record_consensus_state_metric();
+    }
+
+    fn record_consensus_state_metric(&self) {
+        let state = if self.is_in_timeout_phase() {
+            ConsensusStateMetric::Timeout
+        } else {
+            match self.bft_round_state.state_tag {
+                StateTag::Joining => ConsensusStateMetric::Joining,
+                StateTag::Leader => ConsensusStateMetric::Leader,
+                StateTag::Follower => ConsensusStateMetric::Follower,
+            }
+        };
+
+        self.metrics.set_state(state);
+    }
+
+    fn is_in_timeout_phase(&self) -> bool {
+        !matches!(
+            self.bft_round_state.timeout.state,
+            role_timeout::TimeoutState::Voting
+        )
+    }
+
+    fn schedule_next_timeout(&mut self) {
+        self.bft_round_state.timeout.next_scheduled =
+            role_timeout::ScheduledTimeout::sleep(self.config.consensus.timeout_after);
+    }
+
+    fn cache_timeout_certificate(
+        &mut self,
+        slot: Slot,
+        view: View,
+        timeout_qc: TimeoutQC,
+        tc_kind: TCKind,
+    ) {
+        let cache_size = self.config.consensus.timeout_certificate_cache_size;
+        if cache_size == 0 {
+            return;
+        }
+        self.store
+            .recent_timeout_certificates
+            .retain(|entry| !(entry.slot == slot && entry.view == view));
+        self.store
+            .recent_timeout_certificates
+            .push_back(TimeoutCertificateCacheEntry {
+                slot,
+                view,
+                timeout_qc,
+                tc_kind,
+            });
+        while self.store.recent_timeout_certificates.len() > cache_size {
+            self.store.recent_timeout_certificates.pop_front();
+        }
+    }
+
+    fn cached_timeout_certificate(&self, slot: Slot, view: View) -> Option<(TimeoutQC, TCKind)> {
+        self.store
+            .recent_timeout_certificates
+            .iter()
+            .rev()
+            .find_map(|entry| {
+                if entry.slot == slot && entry.view == view {
+                    Some((entry.timeout_qc.clone(), entry.tc_kind.clone()))
+                } else {
+                    None
+                }
+            })
+    }
+
     fn round_leader(&self) -> Result<ValidatorPublicKey> {
         // Find out who the next leader will be.
         // For now, this is round-robin on slot + view for simplicity.
@@ -223,7 +303,7 @@ impl Consensus {
 
         // Reset some state
         self.bft_round_state.leader = LeaderState::default();
-        self.bft_round_state.timeout.requests.clear();
+        self.bft_round_state.timeout.reset_for_new_round();
 
         match ticket {
             // We finished the round with a committed proposal for the slot
@@ -241,6 +321,7 @@ impl Consensus {
                 self.bft_round_state.parent_hash = committed_proposal.hashed();
                 self.bft_round_state.parent_timestamp = committed_proposal.timestamp.clone();
                 self.bft_round_state.parent_cut = committed_proposal.cut.clone();
+                self.record_prepare_cache_sizes();
 
                 // Store the last commited QC to avoid issues when parsing Commit messages before Prepare
                 self.bft_round_state.follower.buffered_quorum_certificate = match ticket {
@@ -252,11 +333,19 @@ impl Consensus {
                     match action {
                         // Any new validators are added to the consensus and removed from candidates.
                         ConsensusStakingAction::Bond { candidate } => {
-                            debug!("🎉 New validator bonded: {}", candidate.signature.validator);
+                            let validator = candidate.signature.validator;
+                            if self.store.bft_round_state.staking.is_bonded(&validator) {
+                                tracing::warn!(
+                                    "Ignoring duplicate bond action for already bonded validator {}",
+                                    validator
+                                );
+                                continue;
+                            }
+                            debug!("🎉 New validator bonded: {}", validator);
                             self.store
                                 .bft_round_state
                                 .staking
-                                .bond(candidate.signature.validator)
+                                .bond(validator)
                                 .map_err(|e| anyhow::anyhow!(e))?;
                         }
                         ConsensusStakingAction::PayFeesForDaDi {
@@ -298,16 +387,12 @@ impl Consensus {
             .at_round(self.bft_round_state.slot, self.bft_round_state.view);
 
         let round_leader = self.round_leader()?;
+        self.schedule_next_timeout();
         if round_leader == *self.crypto.validator_pubkey() {
-            self.bft_round_state.state_tag = StateTag::Leader;
+            self.set_state_tag(StateTag::Leader);
             debug!("👑 I'm the new leader! 👑")
         } else {
-            self.bft_round_state.state_tag = StateTag::Follower;
-            self.store
-                .bft_round_state
-                .timeout
-                .state
-                .schedule_next(TimestampMsClock::now(), self.config.consensus.timeout_after);
+            self.set_state_tag(StateTag::Follower);
         }
 
         Ok(())
@@ -383,14 +468,11 @@ impl Consensus {
             BlstCrypto::verify_aggregate(&expected_signed_message),
             self.verify_quorum_signers_part_of_consensus(quorum_certificate),
         ) {
-            (Ok(res), true) if !res => {
-                bail!("Quorum Certificate received is invalid")
-            }
+            (Ok(()), true) => {}
             (Err(err), _) => bail!("Quorum Certificate verification failed: {}", err),
             (_, false) => {
                 bail!("Quorum Certificate received contains non-consensus validators")
             }
-            _ => {}
         };
 
         // This helpfully ignores any signatures that would not be actually part of the consensus
@@ -460,6 +542,7 @@ impl Consensus {
                 )
             }
             ConsensusNetMessage::PrepareVote(prepare_vote) => {
+                BlstCrypto::verify(&prepare_vote).context("Invalid PrepareVote signature")?;
                 with_metric!(
                     self.metrics,
                     "on_prepare_vote",
@@ -474,6 +557,7 @@ impl Consensus {
                 )
             }
             ConsensusNetMessage::ConfirmAck(confirm_ack) => {
+                BlstCrypto::verify(&confirm_ack).context("Invalid ConfirmAck signature")?;
                 with_metric!(
                     self.metrics,
                     "on_confirm_ack",
@@ -484,6 +568,10 @@ impl Consensus {
                 self.on_commit(sender, commit_quorum_certificate, proposal_hash_hint)
             }
             ConsensusNetMessage::Timeout((timeout, tk)) => {
+                BlstCrypto::verify(&timeout).context("Invalid Timeout signature")?;
+                if let TimeoutKind::NilProposal(nil) = &tk {
+                    BlstCrypto::verify(nil).context("Invalid NilProposal timeout signature")?;
+                }
                 with_metric!(self.metrics, "on_timeout", self.on_timeout(timeout, tk))
             }
             ConsensusNetMessage::TimeoutCertificate(
@@ -502,6 +590,7 @@ impl Consensus {
                 )
             ),
             ConsensusNetMessage::ValidatorCandidacy(candidacy) => {
+                BlstCrypto::verify(&candidacy).context("Invalid ValidatorCandidacy signature")?;
                 self.on_validator_candidacy(candidacy)
             }
             ConsensusNetMessage::SyncRequest(proposal_hash) => {
@@ -518,6 +607,7 @@ impl Consensus {
     }
 
     /// Apply ticket locally, and start new round with it
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, ticket)))]
     fn advance_round(&mut self, ticket: Ticket) -> Result<()> {
         self.apply_ticket(ticket.clone())?;
 
@@ -571,7 +661,8 @@ impl Consensus {
         self.metrics.commit();
 
         let current_proposal = current_proposal!(self)
-            .context("Cannot emit commit event without a current proposal")?;
+            .context("Cannot emit commit event without a current proposal")?
+            .clone();
 
         self.bus
             .send(ConsensusEvent::CommitConsensusProposal(
@@ -589,6 +680,10 @@ impl Consensus {
     }
 
     /// Message received by leader & follower.
+    #[cfg_attr(
+        feature = "instrumentation",
+        tracing::instrument(skip(self, candidacy))
+    )]
     fn on_validator_candidacy(
         &mut self,
         candidacy: SignedByValidator<ValidatorCandidacy>,
@@ -623,6 +718,15 @@ impl Consensus {
             bail!("🛑 Candidate validator is not staking !");
         }
 
+        if self
+            .validator_candidates
+            .iter()
+            .any(|existing| existing.signature.validator == candidacy.signature.validator)
+        {
+            debug!("Validator candidacy already queued. Ignoring duplicate");
+            return Ok(());
+        }
+
         // Add validator to consensus candidates
         self.validator_candidates.push(candidacy);
         Ok(())
@@ -655,9 +759,10 @@ impl Consensus {
                             ..Default::default()
                         });
 
-                        self.bft_round_state.timeout.requests.clear();
+                        self.bft_round_state.timeout.reset_for_new_round();
                     }
                 }
+                self.record_consensus_state_metric();
                 Ok(())
             }
         }
@@ -665,7 +770,6 @@ impl Consensus {
 
     async fn handle_command(&mut self, msg: ConsensusCommand) -> Result<()> {
         match msg {
-            ConsensusCommand::TimeoutTick => self.on_timeout_tick(),
             ConsensusCommand::StartNewSlot(may_delay) => {
                 self.start_round(TimestampMsClock::now(), may_delay).await?;
                 Ok(())
@@ -727,15 +831,18 @@ impl Consensus {
                         let round_leader = self.round_leader()?;
 
                         if round_leader == *self.crypto.validator_pubkey() {
-                            self.bft_round_state.state_tag = StateTag::Leader;
+                            self.set_state_tag(StateTag::Leader);
                             info!("👑 Starting consensus as leader");
                         } else {
-                            self.bft_round_state.state_tag = StateTag::Follower;
+                            self.set_state_tag(StateTag::Follower);
                             info!(
                                 "💂‍♂️ Starting consensus as follower of leader {}",
                                 round_leader
                             );
                         }
+
+                        // Schedule timeout for both leader and follower to ensure recovery from stuck states
+                        self.schedule_next_timeout();
 
                         // Send a CommitConsensusProposal for the genesis block
                         _ = log_error!(self
@@ -759,9 +866,9 @@ impl Consensus {
                         // maybe we were about to be the leader and got byzantined out.
                         // Regardless, we should probably assume that we need to catch up.
                         // TODO: this logic can be improved.
-                        self.bft_round_state.state_tag = StateTag::Joining;
+                        self.set_state_tag(StateTag::Joining);
                         // Set up an initial timeout to ensure we don't get stuck if we miss commits
-                        self.store.bft_round_state.timeout.state.schedule_next(TimestampMsClock::now(), self.config.consensus.timeout_after);
+                        self.schedule_next_timeout();
 
                         break;
                     },
@@ -784,19 +891,21 @@ impl Consensus {
             "🚀 Starting consensus as {:?}",
             self.bft_round_state.state_tag
         );
-
-        let mut timeout_ticker = interval(Duration::from_millis(200));
-        timeout_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        self.record_consensus_state_metric();
 
         module_handle_messages! {
             on_self self,
+            _ = self.bft_round_state.timeout.next_scheduled.0.as_mut(), if !self.is_round_leader() => {
+                let _ = log_error!(self.on_timeout_trigger(), "Error while handling timeout tick");
+            }
             listen<NodeStateEvent> event => {
                 let _ = log_error!(self.handle_node_state_event(event).await, "Error while handling data event");
             }
             listen<ConsensusCommand> cmd => {
                 let _ = log_error!(self.handle_command(cmd).await, "Error while handling consensus command");
             }
-            listen<MsgWithHeader<ConsensusNetMessage>> msg => {
+            listen<MsgWithHeader<ConsensusNetMessage>> msg, span(ctx) => {
+                let _span = info_span_ctx!("handle_consensus_net_message", ctx).entered();
                 let _ = log_error!(self.handle_net_message(msg), "Consensus message failed");
             }
             command_response<QueryConsensusInfo, ConsensusInfo> _ => {
@@ -820,9 +929,6 @@ impl Consensus {
                     ))
                 }
             }
-            _ = timeout_ticker.tick() => {
-                _ = log_error!(self.bus.send(ConsensusCommand::TimeoutTick), "Cannot send message over channel");
-            }
         };
 
         Ok(())
@@ -841,6 +947,7 @@ impl Consensus {
                 ..Default::default()
             },
             validator_candidates: self.validator_candidates.clone(),
+            recent_timeout_certificates: VecDeque::new(),
         };
         let res = borsh::to_vec(&store_copy).context("Failed to serialize BFT round state")?;
         Ok(QueryConsensusCatchupStoreResponse(res))
@@ -864,9 +971,11 @@ pub mod test {
     use crate::{
         bus::{bus_client, command_response::CmdRespClient},
         rest::RestApi,
+        tests::autobahn_testing::AutobahnBusClient,
         utils::integration_test::NodeIntegrationCtxBuilder,
     };
     use hyli_modules::{
+        bus::BusEnvelope,
         handle_messages,
         node_state::{module::NodeStateModule, NodeState},
     };
@@ -875,10 +984,11 @@ pub mod test {
 
     use super::*;
     use crate::{
-        bus::{dont_use_this::get_receiver, metrics::BusMetrics, SharedMessageBus},
-        model::DataProposalHash,
+        bus::{dont_use_this::get_receiver, SharedMessageBus},
         p2p::network::NetMessage,
-        tests::autobahn_testing::*,
+        //tests::autobahn_testing::*,
+        //tests::autobahn_testing_macros::*,
+        tests::autobahn_testing_macros::{broadcast, send, simple_commit_round},
         utils::conf::Conf,
     };
     use assertables::{assert_contains, assert_none};
@@ -886,9 +996,9 @@ pub mod test {
     use utils::TimestampMs;
 
     pub struct ConsensusTestCtx {
-        pub out_receiver: Receiver<OutboundMessage>,
-        pub _event_receiver: Receiver<ConsensusEvent>,
-        pub _p2p_receiver: Receiver<P2PCommand>,
+        pub out_receiver: Receiver<BusEnvelope<OutboundMessage>>,
+        pub _event_receiver: Receiver<BusEnvelope<ConsensusEvent>>,
+        pub _p2p_receiver: Receiver<BusEnvelope<P2PCommand>>,
         pub consensus: Consensus,
         pub name: String,
     }
@@ -913,7 +1023,7 @@ pub mod test {
                     nodes.push(node);
                 }
 
-                $crate::tests::autobahn_testing::build_tuple!(nodes.remove(0), $count)
+                $crate::tests::autobahn_testing_macros::build_tuple!(nodes.remove(0), $count)
             }
         }};
     }
@@ -924,14 +1034,22 @@ pub mod test {
             shared_bus: &SharedMessageBus,
             crypto: BlstCrypto,
         ) -> Consensus {
-            let store = ConsensusStore::default();
+            let mut store = ConsensusStore::default();
             let mut conf = Conf::default();
             conf.consensus.slot_duration = Duration::from_millis(1000);
             conf.consensus.timeout_after = Duration::from_millis(5000);
+            conf.consensus.timeout_certificate_cache_size = 100;
+            conf.consensus.buffered_prepares_max_in_memory = 100;
+            conf.consensus.buffered_prepares_max_serialized = 20;
+            store
+                .bft_round_state
+                .follower
+                .buffered_prepares
+                .set_max_size(Some(conf.consensus.buffered_prepares_max_in_memory));
             let bus = ConsensusBusClient::new_from_bus(shared_bus.new_handle()).await;
 
             Consensus {
-                metrics: ConsensusMetrics::global("id".to_string()),
+                metrics: ConsensusMetrics::global(),
                 bus,
                 file: None,
                 store,
@@ -941,7 +1059,7 @@ pub mod test {
         }
 
         pub async fn new(name: &str, crypto: BlstCrypto) -> Self {
-            let shared_bus = SharedMessageBus::new(BusMetrics::global("global".to_string()));
+            let shared_bus = SharedMessageBus::new();
             let out_receiver = get_receiver::<OutboundMessage>(&shared_bus).await;
             let event_receiver = get_receiver::<ConsensusEvent>(&shared_bus).await;
             let p2p_receiver = get_receiver::<P2PCommand>(&shared_bus).await;
@@ -973,17 +1091,16 @@ pub mod test {
             }
 
             self.consensus.bft_round_state.slot = 1;
-            self.consensus.bft_round_state.parent_hash =
-                ConsensusProposalHash("genesis".to_string());
+            self.consensus.bft_round_state.parent_hash = b"genesis".into();
             self.consensus.bft_round_state.parent_cut = vec![(
-                LaneId(
+                LaneId::new(
                     cryptos
                         .first()
                         .expect("No cryptos available")
                         .validator_pubkey()
                         .clone(),
                 ),
-                DataProposalHash("genesis".to_string()),
+                b"genesis".into(),
                 LaneBytesSize(100),
                 AggregateSignature::default(),
             )];
@@ -996,11 +1113,19 @@ pub mod test {
             }
         }
 
+        /// Set a node up to catchup to the consensus without being part of it.
         pub fn setup_for_joining(&mut self, nodes: &[&ConsensusTestCtx]) {
             for other_node in nodes.iter() {
                 self.add_trusted_validator(other_node.consensus.crypto.validator_pubkey());
             }
             self.consensus.bft_round_state.state_tag = StateTag::Joining;
+        }
+
+        /// Set a node up to catchup to the consensus while already being part of it (e.g. after starting)
+        pub fn setup_for_rejoining(&mut self, slot: u64) {
+            self.consensus.bft_round_state.state_tag = StateTag::Joining;
+            self.consensus.bft_round_state.slot = slot;
+            self.consensus.bft_round_state.view = 0;
         }
 
         pub fn validator_pubkey(&self) -> ValidatorPublicKey {
@@ -1011,20 +1136,24 @@ pub mod test {
             self.consensus.bft_round_state.staking.clone()
         }
 
+        pub fn slot(&self) -> u64 {
+            self.consensus.bft_round_state.slot
+        }
+
+        pub fn view(&self) -> u64 {
+            self.consensus.bft_round_state.view
+        }
+
+        pub fn current_proposal(&self) -> Option<ConsensusProposal> {
+            self.consensus.bft_round_state.current_proposal.clone()
+        }
+
         pub async fn timeout(nodes: &mut [&mut ConsensusTestCtx]) {
             for n in nodes {
+                n.consensus.bft_round_state.timeout.next_scheduled =
+                    role_timeout::ScheduledTimeout::sleep(Duration::ZERO);
                 n.consensus
-                    .store
-                    .bft_round_state
-                    .timeout
-                    .state
-                    .schedule_next(
-                        TimestampMsClock::now() - Duration::from_secs(10),
-                        Duration::from_secs(5),
-                    );
-                n.consensus
-                    .handle_command(ConsensusCommand::TimeoutTick)
-                    .await
+                    .on_timeout_trigger()
                     .unwrap_or_else(|err| panic!("Timeout tick for node {}: {:?}", n.name, err));
             }
         }
@@ -1069,16 +1198,11 @@ pub mod test {
             matches!(self.consensus.bft_round_state.state_tag, StateTag::Joining)
         }
 
-        pub fn setup_for_round(
-            nodes: &mut [&mut ConsensusTestCtx],
-            leader: usize,
-            slot: u64,
-            view: u64,
-        ) {
+        pub fn setup_for_round(nodes: &mut [&mut ConsensusTestCtx], slot: u64, view: u64) {
             // TODO: write a real one?
             let commit_qc = QuorumCertificate(AggregateSignature::default(), ConfirmAckMarker);
 
-            for (index, node) in nodes.iter_mut().enumerate() {
+            for node in nodes.iter_mut() {
                 node.consensus.bft_round_state.slot = slot;
                 node.consensus.bft_round_state.view = view;
 
@@ -1087,7 +1211,7 @@ pub mod test {
                     .follower
                     .buffered_quorum_certificate = Some(commit_qc.clone());
 
-                if index == leader {
+                if node.consensus.round_leader().unwrap() == node.pubkey() {
                     node.consensus.bft_round_state.state_tag = StateTag::Leader;
                     node.consensus.bft_round_state.leader.pending_ticket =
                         Some(Ticket::CommitQC(commit_qc.clone()));
@@ -1195,6 +1319,8 @@ pub mod test {
                 .try_recv()
                 .expect(format!("{description}: No message broadcasted").as_str());
 
+            let rec = rec.into_message();
+
             if let OutboundMessage::BroadcastMessage(net_msg) = rec {
                 if let NetMessage::ConsensusMessage(msg) = net_msg {
                     Box::pin(async move { msg })
@@ -1204,14 +1330,15 @@ pub mod test {
                 }
             } else if let OutboundMessage::SendMessage { msg: net_msg, .. } = rec {
                 if let NetMessage::ConsensusMessage(_) = net_msg {
-                    panic!("{description}: received a send instead of a broadcast");
+                    warn!("{description}: skipping send instead of broadcast");
+                    self.assert_broadcast(description)
                 } else {
                     warn!("{description}: skipping {:?}", net_msg);
                     self.assert_broadcast(description)
                 }
             } else {
                 warn!(
-                    "{description}: OutboundMessage::BroadcastMessage message is missing, found {:?}",
+                    "{description}: BroadcastMessage message missing, found {:?}",
                     rec
                 );
                 self.assert_broadcast(description)
@@ -1221,11 +1348,29 @@ pub mod test {
         #[track_caller]
         pub(crate) fn assert_no_broadcast(&mut self, description: &str) {
             #[allow(clippy::expect_fun_call)]
-            let rec = self.out_receiver.try_recv();
+            let rec = self.out_receiver.try_recv().map(|msg| msg.into_message());
 
             match rec {
                 Ok(OutboundMessage::BroadcastMessage(net_msg)) => {
                     panic!("{description}: Broadcast message found: {net_msg:?}")
+                }
+                els => {
+                    info!("{description}: Got {:?}", els);
+                }
+            }
+        }
+
+        #[track_caller]
+        pub(crate) fn assert_no_send(&mut self, to: &ValidatorPublicKey, description: &str) {
+            #[allow(clippy::expect_fun_call)]
+            let rec = self.out_receiver.try_recv().map(|msg| msg.into_message());
+
+            match rec {
+                Ok(OutboundMessage::SendMessage {
+                    validator_id,
+                    msg: NetMessage::ConsensusMessage(net_msg),
+                }) if &validator_id == to => {
+                    panic!("{description}: Send message found: {net_msg:?}")
                 }
                 els => {
                     info!("{description}: Got {:?}", els);
@@ -1242,15 +1387,23 @@ pub mod test {
             let rec = self
                 .out_receiver
                 .try_recv()
-                .expect(format!("{description}: No message sent").as_str());
+                .expect(format!("{description}: No message sent").as_str())
+                .into_message();
             if let OutboundMessage::SendMessage {
-                validator_id: dest,
+                validator_id,
                 msg: net_msg,
             } = rec
             {
                 if let NetMessage::ConsensusMessage(msg) = net_msg {
-                    assert_eq!(to, &dest, "Got message {msg:?}");
-                    Box::pin(async move { msg })
+                    if to == &validator_id {
+                        Box::pin(async move { msg })
+                    } else {
+                        warn!(
+                            "{description}: skipping send to {}, expected {}",
+                            validator_id, to
+                        );
+                        self.assert_send(to, description)
+                    }
                 } else {
                     warn!("{description}: skipping non-consensus message, details in debug");
                     debug!("Message is: {:?}", net_msg);
@@ -1313,10 +1466,7 @@ pub mod test {
 
         assert_eq!(cp1.slot, 1);
         assert_eq!(view1, 0);
-        assert_eq!(
-            cp1.parent_hash,
-            ConsensusProposalHash("genesis".to_string())
-        );
+        assert_eq!(cp1.parent_hash, b"genesis".into());
         assert_eq!(ticket1, Ticket::Genesis);
 
         // Slot 1 - leader = node2
@@ -1343,6 +1493,33 @@ pub mod test {
         assert_eq!(cp3.slot, 3);
         assert_eq!(view3, 0);
         assert!(matches!(ticket3, Ticket::CommitQC(_)));
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_prepare_vote_invalid_signature_rejected() {
+        let (mut node1, node2): (ConsensusTestCtx, ConsensusTestCtx) = build_nodes!(2).await;
+
+        let signed_vote = node2
+            .consensus
+            .crypto
+            .sign((ConsensusProposalHash::from(b"hash-a"), PrepareVoteMarker))
+            .unwrap();
+        let invalid_vote = Signed {
+            msg: (ConsensusProposalHash::from(b"hash-b"), PrepareVoteMarker),
+            signature: signed_vote.signature,
+        };
+
+        let net_msg = node2
+            .consensus
+            .crypto
+            .sign_msg_with_header(ConsensusNetMessage::PrepareVote(invalid_vote))
+            .unwrap();
+
+        let err = node1.handle_msg_err(&net_msg).await;
+        assert!(
+            format!("{err:#}").contains("Invalid PrepareVote signature"),
+            "unexpected error: {err:#}"
+        );
     }
 
     #[test_log::test(tokio::test)]
@@ -1419,13 +1596,13 @@ pub mod test {
             slot: 2,
             timestamp: TimestampMs(123),
             cut: vec![(
-                LaneId(node2.pubkey()),
-                DataProposalHash("test".to_string()),
+                LaneId::new(node2.pubkey()),
+                b"test".into(),
                 LaneBytesSize::default(),
                 AggregateSignature::default(),
             )],
             staking_actions: vec![],
-            parent_hash: ConsensusProposalHash("hash".into()),
+            parent_hash: b"hash".into(),
         };
 
         // Create wrong prepare
@@ -1499,13 +1676,13 @@ pub mod test {
                     slot: 1,
                     timestamp: TimestampMs(123),
                     cut: vec![(
-                        LaneId(node2.pubkey()),
-                        DataProposalHash("test".to_string()),
+                        LaneId::new(node2.pubkey()),
+                        b"test".into(),
                         LaneBytesSize::default(),
                         AggregateSignature::default(),
                     )],
                     staking_actions: vec![],
-                    parent_hash: ConsensusProposalHash("hash".into()),
+                    parent_hash: b"hash".into(),
                 },
                 Ticket::Genesis,
                 0,
@@ -1548,13 +1725,13 @@ pub mod test {
                     slot: 1,
                     timestamp: TimestampMs(123),
                     cut: vec![(
-                        LaneId(node2.pubkey()),
-                        DataProposalHash("test".to_string()),
+                        LaneId::new(node2.pubkey()),
+                        b"test".into(),
                         LaneBytesSize::default(),
                         AggregateSignature::default(),
                     )],
                     staking_actions: vec![],
-                    parent_hash: ConsensusProposalHash("hash".into()),
+                    parent_hash: b"hash".into(),
                 },
                 Ticket::Genesis,
                 0,
@@ -1942,6 +2119,102 @@ pub mod test {
         assert_eq!(node3.consensus.bft_round_state.slot, 6);
     }
 
+    #[test_log::test(tokio::test)]
+    async fn duplicate_candidacy_is_ignored() {
+        let mut node1 = ConsensusTestCtx::new_node("node-1").await;
+        let node2 = ConsensusTestCtx::new_node("node-2").await;
+
+        node1.add_staker(&node2, 100, "Add staker").await;
+
+        let candidacy = node2
+            .consensus
+            .crypto
+            .sign(ValidatorCandidacy {
+                peer_address: "127.0.0.1:1234".to_string(),
+            })
+            .expect("sign candidacy");
+
+        node1
+            .consensus
+            .on_validator_candidacy(candidacy.clone())
+            .expect("first candidacy should be accepted");
+        node1
+            .consensus
+            .on_validator_candidacy(candidacy)
+            .expect("duplicate candidacy should be ignored");
+
+        assert_eq!(node1.consensus.validator_candidates.len(), 1);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn duplicate_bond_actions_do_not_fail_commit_application() {
+        let (mut node1, node2): (ConsensusTestCtx, ConsensusTestCtx) = build_nodes!(2).await;
+        let node3 = ConsensusTestCtx::new_node("node-3").await;
+
+        node1.add_staker(&node3, 100, "Add staker").await;
+
+        let candidacy = node3
+            .consensus
+            .crypto
+            .sign(ValidatorCandidacy {
+                peer_address: "127.0.0.1:1234".to_string(),
+            })
+            .expect("sign candidacy");
+
+        let proposal = ConsensusProposal {
+            slot: 1,
+            timestamp: TimestampMs(123),
+            cut: node1.consensus.bft_round_state.parent_cut.clone(),
+            staking_actions: vec![
+                ConsensusStakingAction::Bond {
+                    candidate: Box::new(candidacy.clone()),
+                },
+                ConsensusStakingAction::Bond {
+                    candidate: Box::new(candidacy),
+                },
+            ],
+            parent_hash: node1.consensus.bft_round_state.parent_hash.clone(),
+        };
+
+        node1.consensus.bft_round_state.state_tag = StateTag::Leader;
+        node1.consensus.bft_round_state.current_proposal = Some(proposal.clone());
+
+        let commit_qc = QuorumCertificate(
+            AggregateSignature {
+                signature: Signature("sig".into()),
+                validators: vec![node1.pubkey(), node2.pubkey()],
+            },
+            ConfirmAckMarker,
+        );
+
+        node1
+            .consensus
+            .apply_ticket(Ticket::CommitQC(commit_qc))
+            .expect("duplicate bond actions should be ignored during commit");
+
+        assert!(node1
+            .consensus
+            .bft_round_state
+            .staking
+            .is_bonded(&node3.pubkey()));
+        assert_eq!(
+            node1
+                .consensus
+                .bft_round_state
+                .staking
+                .bonded()
+                .iter()
+                .filter(|validator| *validator == &node3.pubkey())
+                .count(),
+            1
+        );
+        assert_eq!(node1.consensus.bft_round_state.slot, 2);
+        assert_eq!(
+            node1.consensus.bft_round_state.parent_hash,
+            proposal.hashed()
+        );
+    }
+
     bus_client! {
         struct TestBC {
             sender(Query<QueryConsensusInfo, ConsensusInfo>),
@@ -1964,13 +2237,13 @@ pub mod test {
             panic!("Expected a GenesisBlock event");
         };
 
-        let block = NodeState::create("test".to_string(), "test")
+        let block = NodeState::create("test")
             .handle_signed_block(signed_block)
             .unwrap();
 
         // Check that we haven't started the consensus yet
         // (this is awkward to do for now so assume that not receiving an answer is OK)
-        tokio::select! {
+        hyli_turmoil_shims::tokio_select_biased! {
             _ = tokio::time::sleep(Duration::from_secs(1)) => {}
             _ = bc.request(QueryConsensusInfo {}) => {
                 panic!("Consensus should not have started yet");
@@ -1979,7 +2252,7 @@ pub mod test {
 
         bc.send(NodeStateEvent::NewBlock(block)).unwrap();
 
-        tokio::select! {
+        hyli_turmoil_shims::tokio_select_biased! {
             _ = tokio::time::sleep(Duration::from_secs(1)) => {
                 panic!("Consensus should have started");
             }

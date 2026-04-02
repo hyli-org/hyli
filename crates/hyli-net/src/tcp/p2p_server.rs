@@ -1,10 +1,4 @@
-use std::{
-    cmp::Ordering,
-    collections::{HashMap, HashSet},
-    sync::Arc,
-    task::Poll,
-    time::Duration,
-};
+use std::{cmp::Ordering, collections::HashSet, sync::Arc, task::Poll, time::Duration};
 
 use anyhow::{bail, Context};
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -20,10 +14,33 @@ use crate::{
     clock::TimestampMsClock,
     metrics::P2PMetrics,
     ordered_join_set::OrderedJoinSet,
-    tcp::{tcp_client::TcpClient, Handshake},
+    tcp::{tcp_client::TcpClient, Handshake, TcpHeaders, TcpMessageLabel},
+};
+use hyli_turmoil_shims::collections::HashMap;
+
+use super::{
+    tcp_server::{TcpServer, TcpServerOptions},
+    Canal, NodeConnectionData, P2PTcpMessage, TcpEvent,
 };
 
-use super::{tcp_server::TcpServer, Canal, NodeConnectionData, P2PTcpMessage, TcpEvent};
+#[derive(Clone, Debug)]
+pub struct P2PTimeouts {
+    pub poisoned_retry_interval: Duration,
+    pub tcp_client_handshake_timeout: Duration,
+    pub tcp_send_timeout: Duration,
+    pub connect_retry_cooldown: Duration,
+}
+
+impl Default for P2PTimeouts {
+    fn default() -> Self {
+        Self {
+            poisoned_retry_interval: Duration::from_secs(10),
+            tcp_client_handshake_timeout: Duration::from_secs(10),
+            tcp_send_timeout: Duration::from_secs(10),
+            connect_retry_cooldown: Duration::from_secs(3),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum P2PServerEvent<Msg> {
@@ -32,16 +49,18 @@ pub enum P2PServerEvent<Msg> {
         pubkey: ValidatorPublicKey,
         height: u64,
         da_address: String,
+        start_timestamp: TimestampMs,
     },
     P2PMessage {
         msg: Msg,
+        headers: TcpHeaders,
     },
 }
 
 #[derive(Debug)]
-pub enum P2PTcpEvent<Data: BorshDeserialize + BorshSerialize> {
+pub enum P2PTcpEvent<Data: BorshDeserialize + BorshSerialize + TcpMessageLabel> {
     TcpEvent(TcpEvent<Data>),
-    HandShakeTcpClient(String, TcpClient<Data, Data>, Canal),
+    HandShakeTcpClient(String, Box<TcpClient<Data, Data>>, Canal),
     PingPeers,
 }
 
@@ -51,6 +70,11 @@ pub struct PeerSocket {
     timestamp: TimestampMs,
     // This is the socket_addr used in the tcp_server for the current peer
     pub socket_addr: String,
+    // Last time we marked/retried this socket as poisoned.
+    // Note: on a TCP error we drop the tcp_server side, but p2p_server would still broadcast to
+    // this socket until a new handshake overwrites it, generating noisy send errors. We flag it
+    // as poisoned so sends are skipped until the next successful handshake replaces it.
+    pub poisoned_at: Option<TimestampMs>,
 }
 
 #[derive(Clone, Debug)]
@@ -64,11 +88,14 @@ pub struct PeerInfo {
 
 type HandShakeJoinSet<Data> = JoinSet<(String, anyhow::Result<TcpClient<Data, Data>>, Canal)>;
 
-type CanalJob = (HashSet<ValidatorPublicKey>, Result<Vec<u8>, std::io::Error>);
+type CanalJob = (
+    HashSet<ValidatorPublicKey>,
+    (Result<Vec<u8>, std::io::Error>, TcpHeaders, &'static str),
+);
 type CanalJobResult = (
     Canal,
     HashSet<ValidatorPublicKey>,
-    Result<Vec<u8>, std::io::Error>,
+    (Result<Vec<u8>, std::io::Error>, TcpHeaders, &'static str),
 );
 
 #[derive(Debug)]
@@ -83,7 +110,7 @@ pub enum HandshakeOngoing {
 /// The connection is kept alive, hance restarted if it disconnects.
 pub struct P2PServer<Msg>
 where
-    Msg: std::fmt::Debug + BorshDeserialize + BorshSerialize,
+    Msg: std::fmt::Debug + BorshDeserialize + BorshSerialize + TcpMessageLabel,
 {
     // Crypto object used to sign and verify messages
     crypto: Arc<BlstCrypto>,
@@ -101,13 +128,16 @@ where
     peers_ping_ticker: Interval,
     // Serialization of messages can take time so we offload them.
     canal_jobs: HashMap<Canal, OrderedJoinSet<CanalJob>>,
+    timeouts: P2PTimeouts,
+    start_timestamp: TimestampMs,
     _phantom: std::marker::PhantomData<Msg>,
 }
 
 impl<Msg> P2PServer<Msg>
 where
-    Msg: std::fmt::Debug + BorshDeserialize + BorshSerialize + Send + 'static,
+    Msg: std::fmt::Debug + BorshDeserialize + BorshSerialize + TcpMessageLabel + Send + 'static,
 {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         crypto: Arc<BlstCrypto>,
         node_id: String,
@@ -116,20 +146,25 @@ where
         node_p2p_public_address: String,
         node_da_public_address: String,
         canals: HashSet<Canal>,
+        timeouts: P2PTimeouts,
+        start_timestamp: TimestampMs,
     ) -> Result<Self, anyhow::Error> {
         Ok(Self {
             crypto,
             node_id: node_id.clone(),
-            metrics: P2PMetrics::global(node_id.clone()),
+            metrics: P2PMetrics::global(),
             connecting: HashMap::default(),
             max_frame_length,
             node_p2p_public_address,
             node_da_public_address,
             current_height: 0,
-            tcp_server: TcpServer::start_with_opts(
+            tcp_server: TcpServer::start_with_options(
                 port,
-                max_frame_length,
-                format!("P2P-{node_id}").as_str(),
+                "P2P",
+                TcpServerOptions {
+                    max_frame_length,
+                    send_timeout: timeouts.tcp_send_timeout,
+                },
             )
             .await?,
             peers: HashMap::new(),
@@ -139,6 +174,8 @@ where
                 .into_iter()
                 .map(|canal| (canal, OrderedJoinSet::new()))
                 .collect(),
+            timeouts,
+            start_timestamp,
             _phantom: std::marker::PhantomData,
         })
     }
@@ -166,36 +203,74 @@ where
         // Await either of the joinsets in the self.canal_jobs hashmap
 
         loop {
-            tokio::select! {
+            hyli_turmoil_shims::tokio_select_biased! {
                 Some(tcp_event) = self.tcp_server.listen_next() => {
                     return P2PTcpEvent::TcpEvent(tcp_event);
                 },
                 Some(joinset_result) = self.handshake_clients_tasks.join_next() => {
                     match joinset_result {
-                        Ok(task_result) =>{
-                            if let (public_addr, Ok(tcp_client), canal) = task_result {
-                                return P2PTcpEvent::HandShakeTcpClient(public_addr, tcp_client, canal);
+                        Ok((public_addr, Ok(tcp_client), canal)) => {
+                            if let Some(HandshakeOngoing::TcpClientStartedAt(started_at, _)) =
+                                self.connecting.get(&(public_addr.clone(), canal.clone()))
+                            {
+                                let elapsed =
+                                    (TimestampMsClock::now() - started_at.clone()).as_secs_f64();
+                                self.metrics.connect_latency(canal.clone(), elapsed);
                             }
-                            else {
-                                warn!("Error during TcpClient connection, retrying on {}/{}", task_result.0, task_result.2);
-                                _ = self.try_start_connection(task_result.0, task_result.2);
-                                continue
+                            self.metrics.connect_result(
+                                public_addr.clone(),
+                                canal.clone(),
+                                "ok",
+                                "none",
+                            );
+                            return P2PTcpEvent::HandShakeTcpClient(public_addr, Box::new(tcp_client), canal);
+                        }
+                        Ok((public_addr, Err(err), canal)) => {
+                            let reason = if err.to_string().contains("Timeout reached") {
+                                "timeout"
+                            } else {
+                                "error"
+                            };
+                            if let Some(HandshakeOngoing::TcpClientStartedAt(started_at, _)) =
+                                self.connecting.get(&(public_addr.clone(), canal.clone()))
+                            {
+                                let elapsed =
+                                    (TimestampMsClock::now() - started_at.clone()).as_secs_f64();
+                                self.metrics.connect_latency(canal.clone(), elapsed);
                             }
-                        },
-                        Err(e) =>
-                        {
-                            debug!("Error during joinset execution of handshake task (probably): {:?}", e);
-                            continue
+                            self.metrics.connect_result(
+                                public_addr.clone(),
+                                canal.clone(),
+                                "error",
+                                reason,
+                            );
+                            warn!(
+                                "TcpClient connection failed (node={}, peer={}, canal={}): {:#}",
+                                self.node_id, public_addr, canal, err
+                            );
+                            self.try_start_connection(public_addr, canal);
+                            continue;
+                        }
+                        Err(err) => {
+                            warn!(
+                                "Handshake task failed to run to completion (node={}): {:?}",
+                                self.node_id, err
+                            );
+                            continue;
                         }
                     }
                 },
-                (canal, pubkeys, data) = std::future::poll_fn(|cx| Self::poll_hashmap(&mut self.canal_jobs, cx)) => {
+                (canal, pubkeys, (data, headers, message_label)) = std::future::poll_fn(|cx| Self::poll_hashmap(&mut self.canal_jobs, cx)) => {
                     let Ok(msg) = data else {
                         warn!("Error in canal jobs: {:?}", data);
                         continue
                     };
                     // TODO: handle errors?
-                    self.actually_send_to(pubkeys, canal, msg).await;
+                    self.actually_send_to(pubkeys, &canal, msg, headers, message_label).await;
+                    if let Some(jobs) = self.canal_jobs.get(&canal) {
+                        self.metrics
+                            .canal_jobs_snapshot(canal.clone(), jobs.len() as u64);
+                    }
                 }
                 _ = self.peers_ping_ticker.tick() => {
                     return P2PTcpEvent::PingPeers;
@@ -212,53 +287,65 @@ where
         match p2p_tcp_event {
             P2PTcpEvent::TcpEvent(tcp_event) => match tcp_event {
                 TcpEvent::Message {
-                    dest,
+                    socket_addr,
                     data: P2PTcpMessage::Handshake(handshake),
-                } => self.handle_handshake(dest, handshake).await,
+                    ..
+                } => self.handle_handshake(socket_addr, handshake).await,
                 TcpEvent::Message {
-                    dest,
+                    socket_addr,
                     data: P2PTcpMessage::Data(msg),
+                    headers,
                 } => {
-                    if let Some(peer) = self.get_peer_by_socket_addr(&dest) {
-                        self.metrics.message_received(
-                            peer.1.node_connection_data.p2p_public_address.clone(),
-                            peer.0.clone(),
+                    if let Some((peer_pubkey, canal, peer_name, peer_p2p_addr)) =
+                        self.resolve_peer_context_from_socket_addr(&socket_addr)
+                    {
+                        self.metrics.message_received(peer_p2p_addr, canal.clone());
+                        trace!(
+                            "P2P recv data (node={}, peer={} ({}), canal={}, socket_addr={})",
+                            self.node_id,
+                            peer_name,
+                            peer_pubkey,
+                            canal,
+                            socket_addr
+                        );
+                    } else {
+                        self.metrics
+                            .message_received(socket_addr.clone(), Canal("unknown".to_string()));
+                        let unknown_canal = socket_addr
+                            .split_once('/')
+                            .map(|(_, canal_name)| Canal::new(canal_name.to_string()))
+                            .unwrap_or_else(|| Canal::new("unknown"));
+                        self.metrics
+                            .unknown_peer("rx", unknown_canal, "unknown_peer");
+                        trace!(
+                            "P2P recv data (node={}, peer=unknown, socket_addr={})",
+                            self.node_id,
+                            socket_addr
                         );
                     }
-                    Ok(Some(P2PServerEvent::P2PMessage { msg }))
+                    Ok(Some(P2PServerEvent::P2PMessage { msg, headers }))
                 }
-                TcpEvent::Error { dest, error } => {
-                    if let Some(peer) = self.get_peer_by_socket_addr(&dest) {
-                        self.metrics.message_error(
-                            peer.1.node_connection_data.p2p_public_address.clone(),
-                            peer.0.clone(),
-                        );
-                    }
-                    self.handle_error_event(dest, error).await;
+                TcpEvent::Error { socket_addr, error } => {
+                    self.handle_error_event(socket_addr, error).await;
                     Ok(None)
                 }
-                TcpEvent::Closed { dest } => {
-                    if let Some(peer) = self.get_peer_by_socket_addr(&dest) {
-                        self.metrics.message_closed(
-                            peer.1.node_connection_data.p2p_public_address.clone(),
-                            peer.0.clone(),
-                        );
-                    }
-                    self.handle_closed_event(dest);
+                TcpEvent::Closed { socket_addr } => {
+                    self.handle_closed_event(socket_addr);
                     Ok(None)
                 }
             },
             P2PTcpEvent::HandShakeTcpClient(public_addr, tcp_client, canal) => {
                 if let Err(e) = self
-                    .do_handshake(public_addr.clone(), tcp_client, canal.clone())
+                    .do_handshake(public_addr.clone(), *tcp_client, canal.clone())
                     .await
                 {
                     warn!("Error during handshake: {:?}", e);
-                    let _ = self.try_start_connection(public_addr, canal);
+                    self.try_start_connection(public_addr, canal);
                 }
                 Ok(None)
             }
             P2PTcpEvent::PingPeers => {
+                let now = TimestampMsClock::now();
                 let sockets: Vec<(ValidatorPublicKey, Canal, String, PeerSocket)> = self
                     .peers
                     .iter()
@@ -272,9 +359,37 @@ where
                     .collect();
 
                 for (pubkey, canal, public_addr, socket) in sockets {
+                    if socket.poisoned_at.is_some() {
+                        let should_retry = socket
+                            .poisoned_at
+                            .map(|poisoned_at| {
+                                now.clone() - poisoned_at >= self.timeouts.poisoned_retry_interval
+                            })
+                            .unwrap_or(true);
+                        if should_retry {
+                            self.metrics.poison_retry(pubkey.to_string(), canal.clone());
+                            self.metrics.reconnect_attempt(
+                                pubkey.to_string(),
+                                canal.clone(),
+                                "poison_retry",
+                            );
+                            if let Err(e) =
+                                self.try_start_connection_for_peer(&pubkey, canal.clone())
+                            {
+                                self.metrics
+                                    .rehandshake_error(pubkey.to_string(), canal.clone());
+                                warn!(
+                                    "Problem when retrying poisoned socket for peer {} on canal {}: {}",
+                                    pubkey, canal, e
+                                );
+                            }
+                        }
+                        continue;
+                    }
                     self.metrics.ping(public_addr, canal.clone());
-                    if let Err(e) = self.tcp_server.ping(socket.socket_addr.clone()).await {
+                    if let Err(e) = self.tcp_server.ping(socket.socket_addr.clone()) {
                         debug!("Error pinging peer {}: {:?}", socket.socket_addr, e);
+                        self.mark_socket_poisoned(&socket.socket_addr);
                         let _ = self.try_start_connection_for_peer(&pubkey, canal.clone());
                     }
                 }
@@ -299,58 +414,161 @@ where
             .and_then(|p| p.canals.get_mut(canal))
     }
 
-    pub fn get_peer_by_socket_addr(
+    fn resolve_peer_context_from_socket_addr(
         &self,
-        dest: &String,
-    ) -> Option<(&Canal, &PeerInfo, &PeerSocket)> {
-        self.peers.values().find_map(|peer_info| {
-            peer_info
-                .canals
-                .iter()
-                .find(|(_canal, peer_socket)| &peer_socket.socket_addr == dest)
-                .map(|(canal, peer_socket)| (canal, peer_info, peer_socket))
-        })
+        socket_addr: &String,
+    ) -> Option<(ValidatorPublicKey, Canal, String, String)> {
+        // Exact match: socket key is currently registered for a peer/canal.
+        for (peer_pubkey, peer_info) in self.peers.iter() {
+            for (canal, peer_socket) in peer_info.canals.iter() {
+                if peer_socket.socket_addr == *socket_addr {
+                    return Some((
+                        peer_pubkey.clone(),
+                        canal.clone(),
+                        peer_info.node_connection_data.name.clone(),
+                        peer_info.node_connection_data.p2p_public_address.clone(),
+                    ));
+                }
+            }
+        }
+
+        let (public_addr, canal_name) = socket_addr.split_once('/')?;
+        let (peer_pubkey, peer_info) = self
+            .peers
+            .iter()
+            .find(|(_, info)| info.node_connection_data.p2p_public_address == public_addr)?;
+        Some((
+            peer_pubkey.clone(),
+            Canal::new(canal_name.to_string()),
+            peer_info.node_connection_data.name.clone(),
+            peer_info.node_connection_data.p2p_public_address.clone(),
+        ))
+    }
+
+    fn mark_socket_poisoned(&mut self, socket_addr: &String) {
+        if let Some((pubkey, canal, _peer_name, _peer_p2p_addr)) =
+            self.resolve_peer_context_from_socket_addr(socket_addr)
+        {
+            if let Some(peer_socket) = self.get_socket_mut(&canal, &pubkey) {
+                peer_socket.poisoned_at = Some(TimestampMsClock::now());
+                self.metrics
+                    .poison_marked(pubkey.to_string(), canal.clone());
+            }
+        }
     }
 
     async fn handle_error_event(
         &mut self,
-        dest: String,
-        _error: String,
+        socket_addr: String,
+        error: String,
     ) -> Option<P2PServerEvent<Msg>> {
-        warn!("Error with peer connection: {:?}", _error);
+        let peer_ctx = self.resolve_peer_context_from_socket_addr(&socket_addr);
+        if let Some((peer_pubkey, canal, peer_name, peer_p2p_addr)) = peer_ctx.as_ref() {
+            warn!(
+                "P2P TCP error (node={}, peer={} ({}), addr={}, canal={}, socket_addr={}): {}",
+                self.node_id, peer_name, peer_pubkey, peer_p2p_addr, canal, socket_addr, error
+            );
+            self.metrics
+                .message_error(peer_p2p_addr.to_string(), canal.clone());
+            self.metrics
+                .reconnect_attempt(peer_p2p_addr.to_string(), canal.clone(), "tcp_error");
+        } else {
+            self.metrics
+                .message_error(socket_addr.clone(), Canal("unknown".to_string()));
+            warn!(
+                "P2P TCP error (node={}, socket_addr={}): {}",
+                self.node_id, socket_addr, error
+            );
+        }
         // There was an error with the connection with the peer. We try to reconnect.
 
         // TODO: An error can happen when a message was no *sent* correctly. Investigate how to handle that specific case
         // TODO: match the error type to decide what to do
-        self.tcp_server.drop_peer_stream(dest.clone());
-        if let Some((canal, info, _)) = self.get_peer_by_socket_addr(&dest) {
-            self.start_connection_task(
-                info.node_connection_data.p2p_public_address.clone(),
-                canal.clone(),
-            )
+        self.mark_socket_poisoned(&socket_addr);
+        self.tcp_server.drop_peer_stream(socket_addr.clone());
+
+        if let Some((peer_pubkey, canal, peer_name, _)) = peer_ctx {
+            trace!(
+                "Will retry connection to peer {} canal {} after error {}",
+                peer_name,
+                canal,
+                socket_addr
+            );
+            if let Err(e) = self.try_start_connection_for_peer(&peer_pubkey, canal.clone()) {
+                self.metrics
+                    .rehandshake_error(peer_pubkey.to_string(), canal.clone());
+                warn!(
+                    "Problem when retrying connection to peer {} after error: {}",
+                    peer_pubkey, e
+                );
+            }
+            self.metrics.tcp_error_event(Some(canal.clone()));
+        } else {
+            self.metrics.tcp_error_event(None);
+            warn!(
+                "Peer connection error on {} did not map to a known peer/canal on node={}",
+                socket_addr, self.node_id
+            );
         }
         None
     }
 
-    fn handle_closed_event(&mut self, dest: String) {
+    fn handle_closed_event(&mut self, socket_addr: String) {
         // TODO: investigate how to properly handle this case
         // The connection has been closed by peer. We remove the peer and try to reconnect.
+        let peer_ctx = self.resolve_peer_context_from_socket_addr(&socket_addr);
+        if let Some((peer_pubkey, canal, peer_name, peer_p2p_addr)) = peer_ctx.as_ref() {
+            warn!(
+                "P2P TCP closed (node={}, peer={} ({}), addr={}, canal={}, socket_addr={})",
+                self.node_id, peer_name, peer_pubkey, peer_p2p_addr, canal, socket_addr
+            );
+            self.metrics
+                .message_closed(peer_p2p_addr.to_string(), canal.clone());
+            self.metrics
+                .reconnect_attempt(peer_p2p_addr.to_string(), canal.clone(), "tcp_closed");
+        } else {
+            self.metrics
+                .message_closed(socket_addr.clone(), Canal("unknown".to_string()));
+            warn!(
+                "P2P TCP closed (node={}, socket_addr={})",
+                self.node_id, socket_addr
+            );
+        }
 
         // When we receive a close event
         // It is a closed connection that need to be removed from tcp server clients in all cases
         // If it is a connection matching a canal/peer, it means we can retry
-        self.tcp_server.drop_peer_stream(dest.clone());
-        if let Some((canal, info, _)) = self.get_peer_by_socket_addr(&dest) {
-            self.start_connection_task(
-                info.node_connection_data.p2p_public_address.clone(),
-                canal.clone(),
-            )
+        self.mark_socket_poisoned(&socket_addr);
+        self.tcp_server.drop_peer_stream(socket_addr.clone());
+
+        if let Some((peer_pubkey, canal, peer_name, _)) = peer_ctx {
+            trace!(
+                "Will retry connection to peer {} canal {} after close {}",
+                peer_name,
+                canal,
+                socket_addr
+            );
+            if let Err(e) = self.try_start_connection_for_peer(&peer_pubkey, canal.clone()) {
+                self.metrics
+                    .rehandshake_error(peer_pubkey.to_string(), canal.clone());
+                warn!(
+                    "Problem when retrying connection to peer {} after close: {}",
+                    peer_pubkey, e
+                );
+            }
+            self.metrics.tcp_closed_event(Some(canal.clone()));
+        } else {
+            self.metrics.tcp_closed_event(None);
+            warn!(
+                "Closed socket {} did not map to a known peer/canal on node={}",
+                socket_addr, self.node_id
+            );
         }
     }
 
     async fn handle_handshake(
         &mut self,
-        dest: String,
+        socket_addr: String,
         handshake: Handshake,
     ) -> anyhow::Result<Option<P2PServerEvent<Msg>>> {
         match handshake {
@@ -359,28 +577,49 @@ where
                     .handshake_hello_received(v.msg.p2p_public_address.clone(), canal.clone());
 
                 // Verify message signature
-                BlstCrypto::verify(&v).context("Error verifying Hello message")?;
+                if let Err(e) = BlstCrypto::verify(&v).context("Error verifying Hello message") {
+                    self.metrics.handshake_error(
+                        v.msg.p2p_public_address.clone(),
+                        canal.clone(),
+                        "hello",
+                        "verify",
+                    );
+                    return Err(e);
+                }
+
+                // Best-effort: set a readable peer label on the underlying TcpServer as early as possible.
+                self.tcp_server
+                    .set_peer_label(&socket_addr, Self::peer_socket_label(&v, &canal));
 
                 info!(
-                    "👋 [{}] Processing Hello handshake message {:?}",
-                    canal, v.msg
+                    "👋 [{}] Received Hello from {} ({}) on socket_addr={} ts={}",
+                    canal, v.msg.name, v.signature.validator, socket_addr, timestamp
                 );
                 match self.create_signed_node_connection_data() {
                     Ok(verack) => {
                         // Send Verack response
-                        if let Err(e) = self
-                            .tcp_server
-                            .send(
-                                dest.clone(),
-                                P2PTcpMessage::<Msg>::Handshake(Handshake::Verack((
-                                    canal.clone(),
-                                    verack,
-                                    timestamp.clone(),
-                                ))),
-                            )
-                            .await
-                        {
-                            bail!("Error sending Verack message to {dest}: {:?}", e);
+                        if let Err(e) = self.tcp_server.send(
+                            socket_addr.clone(),
+                            P2PTcpMessage::<Msg>::Handshake(Handshake::Verack((
+                                canal.clone(),
+                                verack,
+                                timestamp.clone(),
+                            ))),
+                            vec![],
+                        ) {
+                            self.metrics.handshake_error(
+                                v.msg.p2p_public_address.clone(),
+                                canal.clone(),
+                                "hello",
+                                "send_verack",
+                            );
+                            bail!(
+                                "Error sending Verack to {} ({}) on socket_addr={}: {:?}",
+                                v.msg.name,
+                                v.signature.validator,
+                                socket_addr,
+                                e
+                            );
                         }
 
                         self.metrics.handshake_verack_emitted(
@@ -389,26 +628,64 @@ where
                         );
                     }
                     Err(e) => {
+                        self.metrics.handshake_error(
+                            v.msg.p2p_public_address.clone(),
+                            canal.clone(),
+                            "hello",
+                            "sign",
+                        );
                         bail!("Error creating signed node connection data: {:?}", e);
                     }
                 }
 
-                Ok(self.handle_peer_update(canal, &v, timestamp, dest))
+                Ok(self.handle_peer_update(canal, &v, timestamp, socket_addr))
             }
             Handshake::Verack((canal, v, timestamp)) => {
                 self.metrics
                     .handshake_verack_received(v.msg.p2p_public_address.clone(), canal.clone());
 
                 // Verify message signature
-                BlstCrypto::verify(&v).context("Error verifying Verack message")?;
+                if let Err(e) = BlstCrypto::verify(&v).context("Error verifying Verack message") {
+                    self.metrics.handshake_error(
+                        v.msg.p2p_public_address.clone(),
+                        canal.clone(),
+                        "verack",
+                        "verify",
+                    );
+                    return Err(e);
+                }
+
+                // Best-effort: set a readable peer label on the underlying TcpServer as early as possible.
+                self.tcp_server
+                    .set_peer_label(&socket_addr, Self::peer_socket_label(&v, &canal));
+
+                if let Some(elapsed) = self
+                    .connecting
+                    .get(&(v.msg.p2p_public_address.clone(), canal.clone()))
+                    .and_then(|ongoing| match ongoing {
+                        HandshakeOngoing::HandshakeStartedAt(_, started_at) => {
+                            Some((TimestampMsClock::now() - started_at.clone()).as_secs_f64())
+                        }
+                        _ => None,
+                    })
+                {
+                    self.metrics.handshake_latency(canal.clone(), elapsed);
+                }
 
                 info!(
-                    "👋 [{}] Processing Verack handshake message {:?}",
-                    canal, v.msg
+                    "👋 [{}] Received Verack from {} ({}) on socket_addr={} ts={}",
+                    canal, v.msg.name, v.signature.validator, socket_addr, timestamp
                 );
-                Ok(self.handle_peer_update(canal, &v, timestamp, dest))
+                Ok(self.handle_peer_update(canal, &v, timestamp, socket_addr))
             }
         }
+    }
+
+    fn peer_socket_label(v: &SignedByValidator<NodeConnectionData>, canal: &Canal) -> String {
+        format!(
+            "{} ({}) {}/{}",
+            v.msg.name, v.signature.validator, v.msg.p2p_public_address, canal
+        )
     }
 
     fn handle_peer_update(
@@ -416,89 +693,125 @@ where
         canal: Canal,
         v: &SignedByValidator<NodeConnectionData>,
         timestamp: TimestampMs,
-        dest: String,
+        socket_addr: String,
     ) -> Option<P2PServerEvent<Msg>> {
         let peer_pubkey = v.signature.validator.clone();
-
-        // in case timestamps are equal -_-
         let local_pubkey = self.crypto.validator_pubkey().clone();
 
+        // Once we received a signed handshake message from that peer, the connection attempt is no
+        // longer "ongoing" from our PoV.
         self.connecting
             .remove(&(v.msg.p2p_public_address.clone(), canal.clone()));
+        self.metrics
+            .connecting_snapshot(self.connecting.len() as u64);
 
-        if let Some(peer_socket) = self.get_socket_mut(&canal, &peer_pubkey) {
-            let peer_addr_to_drop = if peer_socket.timestamp < timestamp || {
-                peer_socket.timestamp == timestamp
-                    && local_pubkey.cmp(&peer_pubkey) == Ordering::Less
-            } {
-                debug!(
-                    "Local peer {}/{} ({}): dropping socket {} in favor of more recent one {}",
-                    v.msg.p2p_public_address, canal, peer_pubkey, peer_socket.socket_addr, dest
-                );
-                let socket_addr = peer_socket.socket_addr.clone();
-                peer_socket.timestamp = timestamp;
-                peer_socket.socket_addr = dest.clone();
-                socket_addr.clone()
+        let is_new_peer = !self.peers.contains_key(&peer_pubkey);
+        let label = Self::peer_socket_label(v, &canal);
+
+        let peer_info = self
+            .peers
+            .entry(peer_pubkey.clone())
+            .or_insert_with(|| PeerInfo {
+                canals: HashMap::new(),
+                node_connection_data: v.msg.clone(),
+            });
+
+        // Refresh signed connection data (height/addresses may evolve).
+        peer_info.node_connection_data = v.msg.clone();
+
+        if let Some(existing_socket) = peer_info.canals.get_mut(&canal) {
+            let should_replace = Self::should_replace_socket(
+                &existing_socket.timestamp,
+                &timestamp,
+                &local_pubkey,
+                &peer_pubkey,
+            );
+
+            let (socket_to_drop, kept_socket_addr) = if should_replace {
+                let old_socket_addr =
+                    std::mem::replace(&mut existing_socket.socket_addr, socket_addr);
+                existing_socket.timestamp = timestamp;
+                existing_socket.poisoned_at = None;
+                (old_socket_addr, existing_socket.socket_addr.clone())
             } else {
-                debug!(
-                    "Local peer {}/{} ({}): keeping socket {} and discard too old {}",
-                    v.msg.p2p_public_address, canal, peer_pubkey, peer_socket.socket_addr, dest
-                );
-                dest
+                existing_socket.poisoned_at = None;
+                (socket_addr, existing_socket.socket_addr.clone())
             };
-            self.tcp_server.drop_peer_stream(peer_addr_to_drop);
-            None
-        } else {
-            // If the validator exists, but not this canal, we create it
-            if let Some(validator) = self.peers.get_mut(&peer_pubkey) {
-                debug!(
-                    "Local peer {}/{} ({}): creating canal for existing peer on socket {}",
-                    v.msg.p2p_public_address, canal, peer_pubkey, dest
-                );
-                validator.canals.insert(
-                    canal.clone(),
-                    PeerSocket {
-                        timestamp,
-                        socket_addr: dest,
-                    },
-                );
-            }
-            // If the validator was never created before
-            else {
-                debug!(
-                    "Local peer {}/{} ({}): creating new peer and canal on socket {}",
-                    v.msg.p2p_public_address, canal, peer_pubkey, dest
-                );
-                let peer_info = PeerInfo {
-                    canals: HashMap::from_iter(vec![(
-                        canal.clone(),
-                        PeerSocket {
-                            timestamp,
-                            socket_addr: dest,
-                        },
-                    )]),
-                    node_connection_data: v.msg.clone(),
-                };
 
-                self.peers.insert(peer_pubkey.clone(), peer_info);
+            trace!(
+                "Peer {} ({}) canal {} on node {} -> dropping socket_addr={} keeping socket_addr={}",
+                v.msg.name, peer_pubkey, canal, self.node_id, socket_to_drop, kept_socket_addr
+            );
+            self.tcp_server.set_peer_label(&kept_socket_addr, label);
+            if socket_to_drop != kept_socket_addr {
+                self.tcp_server.drop_peer_stream(socket_to_drop);
             }
+            return None;
+        }
 
+        // New canal for an existing peer, or first canal for a new peer.
+        peer_info.canals.insert(
+            canal.clone(),
+            PeerSocket {
+                timestamp,
+                socket_addr: socket_addr.clone(),
+                poisoned_at: None,
+            },
+        );
+        self.tcp_server.set_peer_label(&socket_addr, label);
+        let peers_on_canal = self
+            .peers
+            .values()
+            .filter(|info| info.canals.contains_key(&canal))
+            .count() as u64;
+        self.metrics
+            .peers_canal_snapshot(canal.clone(), peers_on_canal);
+
+        if is_new_peer {
             self.metrics.peers_snapshot(self.peers.len() as u64);
-            tracing::info!("New peer connected on canal {}: {}", canal, peer_pubkey);
-            Some(P2PServerEvent::NewPeer {
+            info!(
+                "New peer connected on node {}: {} ({})",
+                self.node_id, v.msg.name, peer_pubkey
+            );
+            return Some(P2PServerEvent::NewPeer {
                 name: v.msg.name.to_string(),
                 pubkey: v.signature.validator.clone(),
                 da_address: v.msg.da_public_address.clone(),
                 height: v.msg.current_height,
-            })
+                start_timestamp: v.msg.start_timestamp.clone(),
+            });
         }
+
+        debug!(
+            "Peer {} ({}) added/updated canal {} on node {} (socket_addr={})",
+            v.msg.name, peer_pubkey, canal, self.node_id, socket_addr
+        );
+        None
     }
 
+    fn should_replace_socket(
+        existing_ts: &TimestampMs,
+        new_ts: &TimestampMs,
+        local_pubkey: &ValidatorPublicKey,
+        peer_pubkey: &ValidatorPublicKey,
+    ) -> bool {
+        existing_ts < new_ts
+            || (existing_ts == new_ts && local_pubkey.cmp(peer_pubkey) == Ordering::Less)
+    }
+
+    #[cfg(test)]
     pub fn remove_peer(&mut self, peer_pubkey: &ValidatorPublicKey, canal: Canal) {
         if let Some(peer_info) = self.peers.get_mut(peer_pubkey) {
             if let Some(removed) = peer_info.canals.remove(&canal) {
                 self.tcp_server
                     .drop_peer_stream(removed.socket_addr.clone());
+                let peers_on_canal = self
+                    .peers
+                    .values()
+                    .filter(|info| info.canals.contains_key(&canal))
+                    .count() as u64;
+                self.metrics
+                    .peers_canal_snapshot(canal.clone(), peers_on_canal);
             }
         }
     }
@@ -514,6 +827,7 @@ where
             current_height: self.current_height,
             p2p_public_address: self.node_p2p_public_address.clone(),
             da_public_address: self.node_da_public_address.clone(),
+            start_timestamp: self.start_timestamp.clone(),
         };
         self.crypto.sign(node_connection_data)
     }
@@ -523,32 +837,39 @@ where
         pubkey: &ValidatorPublicKey,
         canal: Canal,
     ) -> anyhow::Result<()> {
+        let now = TimestampMsClock::now();
+        if let Some(peer_socket) = self.get_socket_mut(&canal, pubkey) {
+            peer_socket.poisoned_at = Some(now.clone());
+        }
+
         let peer = self
             .peers
             .get(pubkey)
             .context(format!("Peer not found {pubkey}"))?;
 
-        tracing::info!(
+        info!(
             "Attempt to reconnect to {}/{}",
-            peer.node_connection_data.p2p_public_address,
-            canal
+            peer.node_connection_data.p2p_public_address, canal
         );
 
-        self.try_start_connection(peer.node_connection_data.p2p_public_address.clone(), canal)?;
+        self.try_start_connection(peer.node_connection_data.p2p_public_address.clone(), canal);
 
         Ok(())
     }
 
     /// Checks if creating a fresh tcp client is relevant and do it if so
     /// Start a task, cancellation safe
-    pub fn try_start_connection(
-        &mut self,
-        peer_address: String,
-        canal: Canal,
-    ) -> anyhow::Result<()> {
+    pub fn try_start_connection(&mut self, peer_address: String, canal: Canal) {
+        trace!(
+            "try_start_connection request to {} on canal {} (node={}, connecting={})",
+            peer_address,
+            canal,
+            self.node_id,
+            self.connecting.len()
+        );
         if peer_address == self.node_p2p_public_address {
             trace!("Trying to connect to self");
-            return Ok(());
+            return;
         }
 
         let now = TimestampMsClock::now();
@@ -558,18 +879,22 @@ where
         if let Some(ongoing) = self.connecting.get(&(peer_address.clone(), canal.clone())) {
             match ongoing {
                 HandshakeOngoing::TcpClientStartedAt(last_connect_attempt, abort_handle) => {
-                    if now.clone() - last_connect_attempt.clone() < Duration::from_secs(3) {
-                        {
-                            return Ok(());
-                        }
+                    if now.clone() - last_connect_attempt.clone()
+                        < self.timeouts.connect_retry_cooldown
+                    {
+                        self.metrics
+                            .handshake_throttle_tcp_client(peer_address.clone(), canal.clone());
+                        return;
                     }
                     abort_handle.abort();
                 }
                 HandshakeOngoing::HandshakeStartedAt(addr, last_handshake_started_at) => {
-                    if now.clone() - last_handshake_started_at.clone() < Duration::from_secs(3) {
-                        {
-                            return Ok(());
-                        }
+                    if now.clone() - last_handshake_started_at.clone()
+                        < self.timeouts.connect_retry_cooldown
+                    {
+                        self.metrics
+                            .handshake_throttle_handshake(peer_address.clone(), canal.clone());
+                        return;
                     }
                     self.tcp_server.drop_peer_stream(addr.to_string());
                 }
@@ -577,7 +902,6 @@ where
         }
 
         self.start_connection_task(peer_address, canal);
-        Ok(())
     }
 
     /// Creates a task that attempts to create a tcp client
@@ -586,14 +910,21 @@ where
         let now = TimestampMsClock::now();
         let peer_address_clone = peer_address.clone();
         let canal_clone = canal.clone();
+        let handshake_timeout = self.timeouts.tcp_client_handshake_timeout;
 
-        tracing::info!("Starting connecting to {}/{}", peer_address, canal);
+        info!(
+            "Starting connection attempt to {} on canal {} (node={})",
+            peer_address, canal, self.node_id
+        );
+        self.metrics
+            .connect_attempt(peer_address.clone(), canal.clone());
 
         let abort_handle = self.handshake_clients_tasks.spawn(async move {
-            let handshake_task = TcpClient::connect_with_opts(
+            let handshake_task = TcpClient::connect_with_opts_and_timeout(
                 "p2p_server_handshake",
                 mfl,
                 peer_address_clone.clone(),
+                handshake_timeout,
             );
 
             let result = handshake_task.await;
@@ -604,6 +935,8 @@ where
             (peer_address.clone(), canal.clone()),
             HandshakeOngoing::TcpClientStartedAt(now, abort_handle),
         );
+        self.metrics
+            .connecting_snapshot(self.connecting.len() as u64);
 
         self.metrics
             .handshake_connection_emitted(peer_address.clone(), canal);
@@ -619,97 +952,158 @@ where
         let timestamp = TimestampMsClock::now();
 
         debug!(
-            "Doing handshake on {}({})/{}",
-            public_addr,
-            tcp_client.socket_addr.to_string(),
-            canal
+            "Starting handshake (node={}, peer_addr={}, peer_socket_addr={}, canal={})",
+            self.node_id, public_addr, tcp_client.socket_addr, canal
         );
 
-        let addr = format!("{public_addr}/{canal}");
+        let socket_addr = format!("{public_addr}/{canal}");
 
         self.connecting.insert(
             (public_addr.clone(), canal.clone()),
-            HandshakeOngoing::HandshakeStartedAt(addr.clone(), timestamp.clone()),
+            HandshakeOngoing::HandshakeStartedAt(socket_addr.clone(), timestamp.clone()),
         );
 
-        self.tcp_server.setup_client(addr.clone(), tcp_client);
         self.tcp_server
-            .send(
-                addr,
-                P2PTcpMessage::<Msg>::Handshake(Handshake::Hello((
-                    canal.clone(),
-                    signed_node_connection_data.clone(),
-                    timestamp,
-                ))),
-            )
-            .await?;
+            .setup_client(socket_addr.clone(), tcp_client);
+        self.tcp_server.send(
+            socket_addr.clone(),
+            P2PTcpMessage::<Msg>::Handshake(Handshake::Hello((
+                canal.clone(),
+                signed_node_connection_data.clone(),
+                timestamp,
+            ))),
+            vec![],
+        )?;
 
         self.metrics.handshake_hello_emitted(public_addr, canal);
 
         Ok(())
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn send(
         &mut self,
         validator_pub_key: ValidatorPublicKey,
         canal: Canal,
         msg: Msg,
     ) -> anyhow::Result<()> {
+        let Some(peer) = self.peers.get(&validator_pub_key) else {
+            warn!(
+                "Send requested to unknown peer {} on canal {} (node={})",
+                validator_pub_key, canal, self.node_id
+            );
+            self.metrics
+                .unknown_peer("tx", canal.clone(), "unknown_peer");
+            return Ok(());
+        };
+
+        let Some(peer_socket) = peer.canals.get(&canal) else {
+            warn!(
+                "Peer {} ({}) has no socket for canal {} on node {}; available canals: {:?}",
+                peer.node_connection_data.name,
+                validator_pub_key,
+                canal,
+                self.node_id,
+                peer.canals.keys().collect::<Vec<_>>()
+            );
+            self.metrics
+                .unknown_peer("tx", canal.clone(), "unknown_canal");
+            return Ok(());
+        };
+        let socket_addr = peer_socket.socket_addr.clone();
+        if peer_socket.poisoned_at.is_some() {
+            debug!(
+                "Peer {} socket {} for canal {} is poisoned; skipping send on node {}",
+                validator_pub_key, socket_addr, canal, self.node_id
+            );
+            self.metrics
+                .poison_send_skipped(validator_pub_key.to_string(), canal.clone());
+            return Ok(());
+        }
+
+        let message_label = msg.message_label();
+        let headers = crate::tcp::headers_from_span();
         if let Some(jobs) = self.canal_jobs.get_mut(&canal) {
             if !jobs.is_empty() {
                 jobs.spawn(async move {
                     (
                         HashSet::from_iter(std::iter::once(validator_pub_key)),
-                        borsh::to_vec(&P2PTcpMessage::Data(msg)),
+                        (
+                            borsh::to_vec(&P2PTcpMessage::Data(msg)),
+                            headers,
+                            message_label,
+                        ),
                     )
                 });
+                self.metrics
+                    .canal_jobs_snapshot(canal.clone(), jobs.len() as u64);
                 return Ok(());
             }
         }
 
-        let (pub_addr, peer_info) = match self.peers.get(&validator_pub_key).and_then(|peer| {
-            let addr = peer.node_connection_data.p2p_public_address.clone();
-            peer.canals.get(&canal).map(|c| (addr, c))
-        }) {
-            Some((addr, info)) => (addr, info),
-            None => {
-                warn!(
-                    "Trying to send message to unknown Peer {}/{}. Unable to proceed.",
-                    validator_pub_key, canal
-                );
-                return Ok(());
-            }
-        };
+        let peer_name = peer.node_connection_data.name.clone();
+        let peer_p2p_addr = peer.node_connection_data.p2p_public_address.clone();
 
         if let Err(e) = self
             .tcp_server
-            .send(peer_info.socket_addr.clone(), P2PTcpMessage::Data(msg))
-            .await
+            .send(socket_addr.clone(), P2PTcpMessage::Data(msg), headers)
         {
-            self.try_start_connection_for_peer(&validator_pub_key, canal)
-                .context(format!(
+            self.metrics
+                .message_send_error(peer_p2p_addr.clone(), canal.clone());
+            self.metrics
+                .reconnect_attempt(peer_p2p_addr.clone(), canal.clone(), "send_error");
+            self.mark_socket_poisoned(&socket_addr);
+            if let Err(start_err) =
+                self.try_start_connection_for_peer(&validator_pub_key, canal.clone())
+            {
+                self.metrics
+                    .rehandshake_error(validator_pub_key.to_string(), canal.clone());
+                return Err(start_err.context(format!(
                     "Re-handshaking after message sending error with peer {validator_pub_key}"
-                ))?;
+                )));
+            }
             bail!(
-                "Failed to send message to peer {}: {:?}",
+                "Failed to send message (node={}, peer={} ({}), addr={}, canal={}, socket_addr={}): {:#}",
+                self.node_id,
+                peer_name,
                 validator_pub_key,
+                peer_p2p_addr,
+                canal,
+                socket_addr,
                 e
             );
         }
 
-        self.metrics.message_emitted(pub_addr, canal);
+        self.metrics.message_emitted(peer_p2p_addr, canal);
         Ok(())
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn broadcast(&mut self, msg: Msg, canal: Canal) {
         let Some(jobs) = self.canal_jobs.get_mut(&canal) else {
             error!("Canal {:?} does not exist in P2P server", canal);
+            self.metrics
+                .unknown_peer("tx", canal.clone(), "unknown_canal");
             return;
         };
+        let message_label = msg.message_label();
         let peers = self.peers.keys().cloned().collect();
-        jobs.spawn(async move { (peers, borsh::to_vec(&P2PTcpMessage::Data(msg))) });
+        let headers = crate::tcp::headers_from_span();
+        jobs.spawn(async move {
+            (
+                peers,
+                (
+                    borsh::to_vec(&P2PTcpMessage::Data(msg)),
+                    headers,
+                    message_label,
+                ),
+            )
+        });
+        self.metrics
+            .canal_jobs_snapshot(canal.clone(), jobs.len() as u64);
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn broadcast_only_for(
         &mut self,
         only_for: &HashSet<ValidatorPublicKey>,
@@ -718,40 +1112,91 @@ where
     ) {
         let Some(jobs) = self.canal_jobs.get_mut(&canal) else {
             error!("Canal {:?} does not exist in P2P server", canal);
+            self.metrics
+                .unknown_peer("tx", canal.clone(), "unknown_canal");
             return;
         };
+        let message_label = msg.message_label();
         let peers = only_for.clone();
-        jobs.spawn(async move { (peers, borsh::to_vec(&P2PTcpMessage::Data(msg))) });
+        let headers = crate::tcp::headers_from_span();
+        jobs.spawn(async move {
+            (
+                peers,
+                (
+                    borsh::to_vec(&P2PTcpMessage::Data(msg)),
+                    headers,
+                    message_label,
+                ),
+            )
+        });
+        self.metrics
+            .canal_jobs_snapshot(canal.clone(), jobs.len() as u64);
     }
 
     async fn actually_send_to(
         &mut self,
         only_for: HashSet<ValidatorPublicKey>,
-        canal: Canal,
+        canal: &Canal,
         msg: Vec<u8>,
+        headers: TcpHeaders,
+        message_label: &'static str,
     ) -> HashMap<ValidatorPublicKey, anyhow::Error> {
         let peer_addr_to_pubkey: HashMap<String, ValidatorPublicKey> = self
             .peers
             .iter()
             .filter_map(|(pubkey, peer)| {
                 if only_for.contains(pubkey) {
-                    peer.canals
-                        .get(&canal)
-                        .map(|socket| (socket.socket_addr.clone(), pubkey.clone()))
+                    peer.canals.get(canal).and_then(|socket| {
+                        socket
+                            .poisoned_at
+                            .is_none()
+                            .then_some((socket.socket_addr.clone(), pubkey.clone()))
+                    })
                 } else {
                     None
                 }
             })
             .collect();
 
-        let res = self
-            .tcp_server
-            .raw_send_parallel(peer_addr_to_pubkey.keys().cloned().collect(), msg)
-            .await;
+        let res = self.tcp_server.raw_send_parallel(
+            peer_addr_to_pubkey.keys().cloned().collect(),
+            msg,
+            headers,
+            message_label,
+        );
+        self.metrics
+            .broadcast_targets(canal.clone(), peer_addr_to_pubkey.len() as u64);
+        self.metrics
+            .broadcast_failures(canal.clone(), res.len() as u64);
+
+        // Count successful sends for P2P metrics (broadcast path doesn't call message_emitted).
+        for (socket_addr, pubkey) in peer_addr_to_pubkey.iter() {
+            if !res.contains_key(socket_addr) {
+                let peer_p2p_addr = self
+                    .peers
+                    .get(pubkey)
+                    .map(|peer| peer.node_connection_data.p2p_public_address.clone())
+                    .unwrap_or_else(|| socket_addr.clone());
+                self.metrics.message_emitted(peer_p2p_addr, canal.clone());
+            }
+        }
 
         HashMap::from_iter(res.into_iter().filter_map(|(k, v)| {
             peer_addr_to_pubkey.get(&k).map(|pubkey| {
+                let peer_p2p_addr = self
+                    .peers
+                    .get(pubkey)
+                    .map(|peer| peer.node_connection_data.p2p_public_address.clone())
+                    .unwrap_or_else(|| k.clone());
+                self.metrics
+                    .message_send_error(peer_p2p_addr.clone(), canal.clone());
+                self.metrics.reconnect_attempt(
+                    peer_p2p_addr.clone(),
+                    canal.clone(),
+                    "broadcast_send_error",
+                );
                 error!("Error sending message to {} during broadcast: {}", k, v);
+                self.mark_socket_poisoned(&k);
                 if let Err(e) = self.try_start_connection_for_peer(pubkey, canal.clone()) {
                     warn!("Problem when triggering re-handshake after message sending error with peer {}/{}: {}", pubkey, canal, e);
                 }
@@ -765,22 +1210,29 @@ where
 pub mod tests {
     use std::collections::HashSet;
 
+    use crate::clock::TimestampMsClock;
+    use crate::tcp::{p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent};
     use anyhow::Result;
     use borsh::{BorshDeserialize, BorshSerialize};
     use hyli_crypto::BlstCrypto;
-    use tokio::net::TcpListener;
-
-    use crate::tcp::{p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent};
 
     use super::P2PTcpEvent;
 
     pub async fn find_available_port() -> u16 {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        addr.port()
+        crate::test_utils::find_available_port_sync()
     }
     // Simple message type for testing
-    #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Eq, PartialEq, PartialOrd, Ord)]
+    #[derive(
+        Debug,
+        Clone,
+        BorshSerialize,
+        BorshDeserialize,
+        Eq,
+        PartialEq,
+        PartialOrd,
+        Ord,
+        crate::tcp::TcpMessageLabel,
+    )]
     pub struct TestMessage(String);
 
     macro_rules! receive_and_handle_event {
@@ -794,6 +1246,21 @@ pub mod tests {
             );
             $server.handle_p2p_tcp_event(event).await?;
         }};
+    }
+
+    async fn receive_and_handle_until(
+        server: &mut super::P2PServer<TestMessage>,
+        error_msg: &str,
+        predicate: impl Fn(&P2PTcpEvent<P2PTcpMessage<TestMessage>>) -> bool,
+    ) -> Result<()> {
+        loop {
+            let event = receive_event(server, error_msg).await?;
+            let matched = predicate(&event);
+            server.handle_p2p_tcp_event(event).await?;
+            if matched {
+                return Ok(());
+            }
+        }
     }
 
     async fn setup_p2p_server_pair() -> Result<(
@@ -816,6 +1283,8 @@ pub mod tests {
             format!("127.0.0.1:{port1}"),
             "127.0.0.1:4321".into(), // send some dummy address for DA,
             HashSet::from_iter(vec![Canal::new("A"), Canal::new("B")]),
+            super::P2PTimeouts::default(),
+            TimestampMsClock::now(),
         )
         .await?;
         let p2p_server2 = P2PServer::new(
@@ -826,6 +1295,8 @@ pub mod tests {
             format!("127.0.0.1:{port2}"),
             "127.0.0.1:4321".into(), // send some dummy address for DA
             HashSet::from_iter(vec![Canal::new("A"), Canal::new("B")]),
+            super::P2PTimeouts::default(),
+            TimestampMsClock::now(),
         )
         .await?;
 
@@ -858,10 +1329,10 @@ pub mod tests {
         let ((port1, mut p2p_server1), (port2, mut p2p_server2)) = setup_p2p_server_pair().await?;
 
         // Initiate handshake from p2p_server1 to p2p_server2
-        _ = p2p_server1.try_start_connection(format!("127.0.0.1:{port2}"), Canal::new("A"));
+        p2p_server1.try_start_connection(format!("127.0.0.1:{port2}"), Canal::new("A"));
 
         // Initiate handshake from p2p_server2 to p2p_server1
-        _ = p2p_server2.try_start_connection(format!("127.0.0.1:{port1}"), Canal::new("A"));
+        p2p_server2.try_start_connection(format!("127.0.0.1:{port1}"), Canal::new("A"));
 
         // For TcpClient to connect
         receive_and_handle_event!(
@@ -879,16 +1350,18 @@ pub mod tests {
         receive_and_handle_event!(
             &mut p2p_server2,
             P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Hello(_))
+                socket_addr: _,
+                data: P2PTcpMessage::Handshake(Handshake::Hello(_)),
+                ..
             }),
             "Expected HandShake Hello message"
         );
         receive_and_handle_event!(
             &mut p2p_server1,
             P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Hello(_))
+                socket_addr: _,
+                data: P2PTcpMessage::Handshake(Handshake::Hello(_)),
+                ..
             }),
             "Expected HandShake Hello message"
         );
@@ -897,16 +1370,18 @@ pub mod tests {
         receive_and_handle_event!(
             &mut p2p_server1,
             P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Verack(_))
+                socket_addr: _,
+                data: P2PTcpMessage::Handshake(Handshake::Verack(_)),
+                ..
             }),
             "Expected HandShake Verack"
         );
         receive_and_handle_event!(
             &mut p2p_server2,
             P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Verack(_))
+                socket_addr: _,
+                data: P2PTcpMessage::Handshake(Handshake::Verack(_)),
+                ..
             }),
             "Expected HandShake Verack"
         );
@@ -932,16 +1407,16 @@ pub mod tests {
         let ((port1, mut p2p_server1), (port2, mut p2p_server2)) = setup_p2p_server_pair().await?;
 
         // Initiate handshake from p2p_server1 to p2p_server2 on canal A
-        let _ = p2p_server1.try_start_connection(format!("127.0.0.1:{port2}"), Canal::new("A"));
+        p2p_server1.try_start_connection(format!("127.0.0.1:{port2}"), Canal::new("A"));
 
         // Initiate handshake from p2p_server2 to p2p_server1 on canal A
-        let _ = p2p_server2.try_start_connection(format!("127.0.0.1:{port1}"), Canal::new("A"));
+        p2p_server2.try_start_connection(format!("127.0.0.1:{port1}"), Canal::new("A"));
 
         // Initiate handshake from p2p_server1 to p2p_server2 on canal B
-        let _ = p2p_server1.try_start_connection(format!("127.0.0.1:{port2}"), Canal::new("B"));
+        p2p_server1.try_start_connection(format!("127.0.0.1:{port2}"), Canal::new("B"));
 
         // Initiate handshake from p2p_server2 to p2p_server1 on canal B
-        let _ = p2p_server2.try_start_connection(format!("127.0.0.1:{port1}"), Canal::new("B"));
+        p2p_server2.try_start_connection(format!("127.0.0.1:{port1}"), Canal::new("B"));
 
         // For TcpClient to connect
         receive_and_handle_event!(
@@ -965,74 +1440,49 @@ pub mod tests {
             "Expected HandShake TCP Client connection"
         );
 
-        // For handshake Hello message
-        receive_and_handle_event!(
-            &mut p2p_server2,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Hello(_))
-            }),
-            "Expected HandShake Hello message canal A"
-        );
-        receive_and_handle_event!(
-            &mut p2p_server2,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Hello(_))
-            }),
-            "Expected HandShake Hello message canal B"
-        );
-        receive_and_handle_event!(
-            &mut p2p_server1,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Hello(_))
-            }),
-            "Expected HandShake Hello message canal A"
-        );
-        receive_and_handle_event!(
-            &mut p2p_server1,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Hello(_))
-            }),
-            "Expected HandShake Hello message canal B"
-        );
+        // Handshake frame ordering can vary across canals; accept Hello/Verack in any order.
+        let mut p1_hello = 0usize;
+        let mut p1_verack = 0usize;
+        let mut p2_hello = 0usize;
+        let mut p2_verack = 0usize;
+        for _ in 0..4 {
+            let e1 = receive_event(&mut p2p_server1, "Expected handshake frame on server1").await?;
+            match &e1 {
+                P2PTcpEvent::TcpEvent(TcpEvent::Message {
+                    socket_addr: _,
+                    data: P2PTcpMessage::Handshake(Handshake::Hello(_)),
+                    ..
+                }) => p1_hello += 1,
+                P2PTcpEvent::TcpEvent(TcpEvent::Message {
+                    socket_addr: _,
+                    data: P2PTcpMessage::Handshake(Handshake::Verack(_)),
+                    ..
+                }) => p1_verack += 1,
+                _ => anyhow::bail!("Expected handshake frame on server1, got {e1:?}"),
+            }
+            p2p_server1.handle_p2p_tcp_event(e1).await?;
 
-        // For handshake Verack message
-        receive_and_handle_event!(
-            &mut p2p_server1,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Verack(_))
-            }),
-            "Expected HandShake Verack"
-        );
-        receive_and_handle_event!(
-            &mut p2p_server2,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Verack(_))
-            }),
-            "Expected HandShake Verack"
-        );
+            let e2 = receive_event(&mut p2p_server2, "Expected handshake frame on server2").await?;
+            match &e2 {
+                P2PTcpEvent::TcpEvent(TcpEvent::Message {
+                    socket_addr: _,
+                    data: P2PTcpMessage::Handshake(Handshake::Hello(_)),
+                    ..
+                }) => p2_hello += 1,
+                P2PTcpEvent::TcpEvent(TcpEvent::Message {
+                    socket_addr: _,
+                    data: P2PTcpMessage::Handshake(Handshake::Verack(_)),
+                    ..
+                }) => p2_verack += 1,
+                _ => anyhow::bail!("Expected handshake frame on server2, got {e2:?}"),
+            }
+            p2p_server2.handle_p2p_tcp_event(e2).await?;
+        }
+        assert_eq!(p1_hello, 2, "server1 should receive 2 Hello frames");
+        assert_eq!(p1_verack, 2, "server1 should receive 2 Verack frames");
+        assert_eq!(p2_hello, 2, "server2 should receive 2 Hello frames");
+        assert_eq!(p2_verack, 2, "server2 should receive 2 Verack frames");
 
-        receive_and_handle_event!(
-            &mut p2p_server1,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Verack(_))
-            }),
-            "Expected HandShake Verack"
-        );
-        receive_and_handle_event!(
-            &mut p2p_server2,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Verack(_))
-            }),
-            "Expected HandShake Verack"
-        );
         // Verify that both servers have each other in their peers map
         assert_eq!(p2p_server1.peers.len(), 1);
         assert_eq!(p2p_server2.peers.len(), 1);
@@ -1086,14 +1536,16 @@ pub mod tests {
         assert!(matches!(
             evt,
             P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Data(_)
+                socket_addr: _,
+                data: P2PTcpMessage::Data(_),
+                ..
             }),
         ));
 
         let P2PTcpEvent::TcpEvent(TcpEvent::Message {
-            dest: _,
+            socket_addr: _,
             data: P2PTcpMessage::Data(data),
+            ..
         }) = evt
         else {
             panic!("test");
@@ -1114,14 +1566,16 @@ pub mod tests {
         assert!(matches!(
             evt,
             P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Data(_)
+                socket_addr: _,
+                data: P2PTcpMessage::Data(_),
+                ..
             }),
         ));
 
         let P2PTcpEvent::TcpEvent(TcpEvent::Message {
-            dest: _,
+            socket_addr: _,
             data: P2PTcpMessage::Data(data),
+            ..
         }) = evt
         else {
             panic!("test");
@@ -1143,14 +1597,16 @@ pub mod tests {
         assert!(matches!(
             evt,
             P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Data(_)
+                socket_addr: _,
+                data: P2PTcpMessage::Data(_),
+                ..
             }),
         ));
 
         let P2PTcpEvent::TcpEvent(TcpEvent::Message {
-            dest: _,
+            socket_addr: _,
             data: P2PTcpMessage::Data(data),
+            ..
         }) = evt
         else {
             panic!("test");
@@ -1172,14 +1628,16 @@ pub mod tests {
         assert!(matches!(
             evt,
             P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Data(_)
-            }),
+                socket_addr: _,
+                data: P2PTcpMessage::Data(_),
+                ..
+            })
         ));
 
         let P2PTcpEvent::TcpEvent(TcpEvent::Message {
-            dest: _,
+            socket_addr: _,
             data: P2PTcpMessage::Data(data),
+            ..
         }) = evt
         else {
             panic!("test");
@@ -1194,7 +1652,7 @@ pub mod tests {
         let ((_, mut p2p_server1), (port2, mut p2p_server2)) = setup_p2p_server_pair().await?;
 
         // Initial connection
-        let _ = p2p_server1.try_start_connection(format!("127.0.0.1:{port2}"), Canal::new("A"));
+        p2p_server1.try_start_connection(format!("127.0.0.1:{port2}"), Canal::new("A"));
 
         // Server1 waits for TcpClient to connect
         receive_and_handle_event!(
@@ -1206,8 +1664,9 @@ pub mod tests {
         receive_and_handle_event!(
             &mut p2p_server2,
             P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Hello(_))
+                socket_addr: _,
+                data: P2PTcpMessage::Handshake(Handshake::Hello(_)),
+                ..
             }),
             "Expected HandShake Hello message"
         );
@@ -1215,8 +1674,9 @@ pub mod tests {
         receive_and_handle_event!(
             &mut p2p_server1,
             P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Verack(_))
+                socket_addr: _,
+                data: P2PTcpMessage::Handshake(Handshake::Verack(_)),
+                ..
             }),
             "Expected HandShake Verack"
         );
@@ -1230,7 +1690,7 @@ pub mod tests {
         // Server1 receives Closed message
         receive_and_handle_event!(
             &mut p2p_server1,
-            P2PTcpEvent::TcpEvent(TcpEvent::Closed { dest: _ }),
+            P2PTcpEvent::TcpEvent(TcpEvent::Closed { socket_addr: _ }),
             "Expected Tcp Error message"
         );
 
@@ -1244,8 +1704,9 @@ pub mod tests {
         receive_and_handle_event!(
             &mut p2p_server2,
             P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Hello(_))
+                socket_addr: _,
+                data: P2PTcpMessage::Handshake(Handshake::Hello(_)),
+                ..
             }),
             "Expected HandShake Hello message"
         );
@@ -1253,8 +1714,9 @@ pub mod tests {
         receive_and_handle_event!(
             &mut p2p_server1,
             P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Verack(_))
+                socket_addr: _,
+                data: P2PTcpMessage::Handshake(Handshake::Verack(_)),
+                ..
             }),
             "Expected HandShake Verack"
         );
@@ -1269,6 +1731,104 @@ pub mod tests {
             1,
             "Server2 should have reconnected to server1"
         );
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn p2p_server_reconnects_after_decode_error() -> Result<()> {
+        let ((_, mut p2p_server1), (port2, mut p2p_server2)) = setup_p2p_server_pair().await?;
+
+        // Initial connection
+        p2p_server1.try_start_connection(format!("127.0.0.1:{port2}"), Canal::new("A"));
+
+        // Server1 waits for TcpClient to connect
+        receive_and_handle_event!(
+            &mut p2p_server1,
+            P2PTcpEvent::HandShakeTcpClient(_, _, _),
+            "Expected HandShake TCP Client connection"
+        );
+        // Server2 receives Hello message
+        receive_and_handle_event!(
+            &mut p2p_server2,
+            P2PTcpEvent::TcpEvent(TcpEvent::Message {
+                socket_addr: _,
+                data: P2PTcpMessage::Handshake(Handshake::Hello(_)),
+                ..
+            }),
+            "Expected HandShake Hello message"
+        );
+        // Server1 receives Verack message
+        receive_and_handle_event!(
+            &mut p2p_server1,
+            P2PTcpEvent::TcpEvent(TcpEvent::Message {
+                socket_addr: _,
+                data: P2PTcpMessage::Handshake(Handshake::Verack(_)),
+                ..
+            }),
+            "Expected HandShake Verack"
+        );
+
+        assert_eq!(p2p_server1.peers.len(), 1);
+        assert_eq!(p2p_server2.peers.len(), 1);
+
+        let connected = p2p_server1.tcp_server.connected_clients();
+        assert_eq!(connected.len(), 1, "Expected a single client socket");
+        let socket_addr = connected.first().cloned().unwrap();
+
+        let send_errors =
+            p2p_server1
+                .tcp_server
+                .raw_send_parallel(vec![socket_addr], vec![255], vec![], "raw");
+        assert!(send_errors.is_empty(), "Expected raw send to succeed");
+
+        // Server2 should see the decode error and attempt to reconnect.
+        receive_and_handle_event!(
+            &mut p2p_server2,
+            P2PTcpEvent::TcpEvent(TcpEvent::Error {
+                socket_addr: _,
+                error: _
+            }),
+            "Expected Tcp Error message"
+        );
+
+        // Server2 waits for TcpClient to reconnect
+        receive_and_handle_event!(
+            &mut p2p_server2,
+            P2PTcpEvent::HandShakeTcpClient(_, _, _),
+            "Expected HandShake TCP Client connection"
+        );
+        // Server1 may see the close before the new handshake hello.
+        receive_and_handle_until(
+            &mut p2p_server1,
+            "Expected HandShake Hello message",
+            |event| {
+                matches!(
+                    event,
+                    P2PTcpEvent::TcpEvent(TcpEvent::Message {
+                        socket_addr: _,
+                        data: P2PTcpMessage::Handshake(Handshake::Hello(_)),
+                        ..
+                    })
+                )
+            },
+        )
+        .await?;
+        // Server2 may see an intermediate close before the verack.
+        receive_and_handle_until(&mut p2p_server2, "Expected HandShake Verack", |event| {
+            matches!(
+                event,
+                P2PTcpEvent::TcpEvent(TcpEvent::Message {
+                    socket_addr: _,
+                    data: P2PTcpMessage::Handshake(Handshake::Verack(_)),
+                    ..
+                })
+            )
+        })
+        .await?;
+
+        assert_eq!(p2p_server1.peers.len(), 1);
+        assert_eq!(p2p_server2.peers.len(), 1);
 
         Ok(())
     }

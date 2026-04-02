@@ -84,7 +84,7 @@ async fn test_register_contract_simple_hyli() {
 
     let block = state.craft_block_and_handle(3, vec![register_c1.clone().into()]);
 
-    assert_eq!(block.failed_txs, vec![register_c1.hashed()]);
+    assert!(is_failed_or_rejected(&state, &block, &register_c1.hashed()));
     assert_eq!(state.contracts.len(), 4);
 }
 
@@ -152,22 +152,21 @@ async fn test_register_contract_failure() {
         ],
     );
 
-    let block = state.force_handle_block(signed_block).parsed_block;
+    let block = state.force_handle_block(signed_block);
 
     assert_eq!(state.contracts.len(), 2);
-    assert_eq!(block.successful_txs, vec![register_good.hashed()]);
-    assert_eq!(
-        block.failed_txs,
-        vec![
-            register_1.hashed(),
-            register_2.hashed(),
-            register_3.hashed(),
-            register_4.hashed(),
-            register_5.hashed(),
-            register_6.hashed(),
-            register_7.hashed(),
-        ]
-    );
+    assert_eq!(block.successful_txs(), vec![register_good.hashed()]);
+    for tx_hash in [
+        register_1.hashed(),
+        register_2.hashed(),
+        register_3.hashed(),
+        register_4.hashed(),
+        register_5.hashed(),
+        register_6.hashed(),
+        register_7.hashed(),
+    ] {
+        assert!(is_failed_or_rejected(&state, &block, &tx_hash));
+    }
 }
 
 #[test_log::test(tokio::test)]
@@ -218,7 +217,7 @@ async fn test_register_contract_composition() {
         ],
     );
 
-    let block = state.force_handle_block(crafted_block).parsed_block;
+    let block = state.force_handle_block(crafted_block);
     assert_eq!(state.contracts.len(), 2);
 
     check_block_is_ok(&block);
@@ -271,7 +270,7 @@ async fn test_register_contract_composition() {
     check_block_is_ok(&block);
 
     assert_eq!(
-        block.timed_out_txs,
+        block.timed_out_txs(),
         vec![compositing_register_willfail.hashed()]
     );
     assert_eq!(state.contracts.len(), 3);
@@ -308,8 +307,8 @@ async fn test_registration_from_contract_without_onchain_effect_do_not_block_set
     let block2 = state.craft_block_and_handle(2, vec![tx_c1_c2.clone().into()]);
 
     // 3. Check second tx is still sequenced
-    assert!(!block2.failed_txs.contains(&tx_c1_c2_hash));
-    assert!(!block2.successful_txs.contains(&tx_c1_c2_hash));
+    assert!(!block2.failed_txs().contains(&tx_c1_c2_hash));
+    assert!(!block2.successful_txs().contains(&tx_c1_c2_hash));
     assert!(state.unsettled_transactions.get(&tx_c1_c2_hash).is_some());
 
     // 4. Send proof_transaction on c1 blob without OnChaineffect::RegisterContract
@@ -320,28 +319,19 @@ async fn test_registration_from_contract_without_onchain_effect_do_not_block_set
     let block3 = state.craft_block_and_handle(3, vec![proof_tx_c1.into()]);
 
     // 5. Assert transaction 2 settled as failed
-    assert!(block3.failed_txs.contains(&tx_c1_c2_hash));
-    assert!(!block3.successful_txs.contains(&tx_c1_c2_hash));
+    assert!(block3.failed_txs().contains(&tx_c1_c2_hash));
+    assert!(!block3.successful_txs().contains(&tx_c1_c2_hash));
     assert!(state.unsettled_transactions.get(&tx_c1_c2_hash).is_none());
 }
 
-fn check_block_is_ok(block: &Block) {
-    let dp_hashes: Vec<TxHash> = block.dp_parent_hashes.clone().into_keys().collect();
+fn check_block_is_ok(block: &NodeStateBlock) {
+    let tx_hashes: HashSet<TxHash> =
+        HashSet::from_iter(signed_block_tx_hashes(&block.signed_block));
 
-    for tx_hash in block.successful_txs.iter() {
-        assert!(dp_hashes.contains(tx_hash));
-    }
-
-    for tx_hash in block.failed_txs.iter() {
-        assert!(dp_hashes.contains(tx_hash));
-    }
-
-    for tx_hash in block.timed_out_txs.iter() {
-        assert!(dp_hashes.contains(tx_hash));
-    }
-
-    for (tx_hash, ev) in block.transactions_events.iter() {
-        assert!(dp_hashes.contains(tx_hash));
+    for (tx_id, event) in block.stateful_events.events.iter() {
+        if matches!(event, StatefulEvent::SequencedTx(..)) {
+            assert!(tx_hashes.contains(&tx_id.1));
+        }
     }
 }
 
@@ -478,14 +468,14 @@ async fn test_register_contract_and_delete_hyli() {
             sub_c2_proof.into(),
         ],
     );
-    assert_eq!(
-        block
-            .registered_contracts
-            .keys()
-            .map(|cn| cn.0.clone())
-            .collect::<Vec<_>>(),
-        vec!["c1", "c2.hyli", "sub.c2.hyli", "wallet"]
-    );
+    let registered = state
+        .contracts
+        .keys()
+        .map(|cn| cn.0.clone())
+        .collect::<HashSet<_>>();
+    for name in ["c1", "c2.hyli", "sub.c2.hyli", "wallet"] {
+        assert!(registered.contains(name));
+    }
     assert_eq!(state.contracts.len(), 5);
 
     // Now delete them.
@@ -524,81 +514,117 @@ async fn test_register_contract_and_delete_hyli() {
         ],
     );
 
-    assert_eq!(
-        block
-            .deleted_contracts
-            .keys()
-            .map(|dce| dce.0.clone())
-            .collect::<Vec<_>>(),
-        vec!["c1", "c2.hyli", "sub.c2.hyli"]
-    );
+    assert!(!state.contracts.contains_key(&ContractName::new("c1")));
+    assert!(!state.contracts.contains_key(&ContractName::new("c2.hyli")));
+    assert!(!state
+        .contracts
+        .contains_key(&ContractName::new("sub.c2.hyli")));
     assert_eq!(state.contracts.len(), 2);
 }
 
-#[test_log::test(tokio::test)]
-async fn test_hyli_contract_update_timeout_window() {
-    let mut state = new_node_state().await;
-    let register_wallet =
-        make_register_tx_with_constructor("hyli@hyli".into(), "hyli".into(), "wallet".into());
-    let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
+#[test]
+fn test_hyli_side_effect_updates_target_without_overwriting_other_fields() {
+    let hyli = hyli_contract_definition();
+    let target = Contract {
+        name: "target".into(),
+        program_id: ProgramId(vec![9, 9, 9]),
+        state: StateCommitment(vec![1, 2, 3]),
+        verifier: Verifier("target-verifier".into()),
+        timeout_window: TimeoutWindow::timeout(BlockHeight(42), BlockHeight(43)),
+    };
 
-    let mut output = make_hyli_output(register_hyli_at_wallet.clone(), BlobIndex(0));
-    let register_hyli_at_wallet_proof =
-        new_proof_tx(&"wallet".into(), &output, &register_hyli_at_wallet.hashed());
+    let mut contracts = HashMap::new();
+    contracts.insert(hyli.name.clone(), hyli.clone());
+    contracts.insert(target.name.clone(), target.clone());
 
-    let register_contract =
-        make_register_tx_with_constructor("hyli@hyli".into(), "hyli".into(), "contract".into());
+    let assert_target_preserved =
+        |contract_changes: &BTreeMap<ContractName, ModifiedContractData>,
+         expected_program_id: &ProgramId,
+         expected_timeout_window: &TimeoutWindow| {
+            let target_change = contract_changes.get(&target.name).unwrap();
+            let ContractStatus::Updated(updated_target) = &target_change.contract_status else {
+                panic!("expected updated target contract");
+            };
+            assert_eq!(updated_target.name, target.name);
+            assert_eq!(updated_target.program_id, *expected_program_id);
+            assert_eq!(updated_target.state, target.state);
+            assert_eq!(updated_target.verifier, target.verifier);
+            assert_eq!(updated_target.timeout_window, *expected_timeout_window);
 
-    state.craft_block_and_handle(
-        1,
-        vec![
-            register_wallet.into(),
-            register_hyli_at_wallet.into(),
-            register_hyli_at_wallet_proof.into(),
-            register_contract.into(),
-        ],
-    );
+            let hyli_change = contract_changes.get(&hyli.name).unwrap();
+            let ContractStatus::Updated(updated_hyli) = &hyli_change.contract_status else {
+                panic!("expected updated hyli contract");
+            };
+            assert_eq!(updated_hyli.name, hyli.name);
+            assert_eq!(updated_hyli.state, StateCommitment(vec![8, 8, 8, 8]));
+            assert_eq!(updated_hyli.verifier, hyli.verifier);
+        };
 
-    assert_eq!(state.contracts.len(), 3);
-    assert_eq!(
-        state
-            .contracts
-            .get(&ContractName::new("contract"))
-            .unwrap()
-            .timeout_window,
-        TimeoutWindow::Timeout(BlockHeight(100))
-    );
-
-    let timeout_window_update_tx = make_update_timeout_window_tx_with_hyli(
+    let mut program_id_changes = BTreeMap::new();
+    let tx = make_update_program_id_tx_with_hyli(
         "hyli".into(),
-        "contract".into(),
-        TimeoutWindow::Timeout(BlockHeight(45)),
+        target.name.clone(),
+        ProgramId(vec![7, 7, 7]),
+    );
+    let mut output = make_hyli_output_with_state(tx, BlobIndex(0), &hyli.state.0, &[8, 8, 8, 8]);
+    output
+        .onchain_effects
+        .push(OnchainEffect::UpdateContractProgramId(
+            target.name.clone(),
+            ProgramId(vec![7, 7, 7]),
+        ));
+
+    let result = NodeStateProcessing::process_proof(
+        &contracts,
+        &mut program_id_changes,
+        &hyli.name,
+        &(
+            hyli.program_id.clone(),
+            hyli.verifier.clone(),
+            TxId::default(),
+            output,
+        ),
     );
 
-    let mut output = make_hyli_output_bis(timeout_window_update_tx.clone(), BlobIndex(0));
-    let verify_hyli_proof = new_proof_tx(
-        &"wallet".into(),
-        &output,
-        &timeout_window_update_tx.hashed(),
+    assert!(matches!(result, ProofProcessingResult::Success));
+    assert_target_preserved(
+        &program_id_changes,
+        &ProgramId(vec![7, 7, 7]),
+        &target.timeout_window,
     );
 
-    let block = state.craft_block_and_handle(
-        2,
-        vec![
-            timeout_window_update_tx.into(),
-            verify_hyli_proof.clone().into(),
-        ],
+    let mut timeout_window_changes = BTreeMap::new();
+    let updated_timeout_window = TimeoutWindow::timeout(BlockHeight(99), BlockHeight(100));
+    let tx = make_update_timeout_window_tx_with_hyli(
+        "hyli".into(),
+        target.name.clone(),
+        updated_timeout_window.clone(),
+    );
+    let mut output = make_hyli_output_with_state(tx, BlobIndex(0), &hyli.state.0, &[8, 8, 8, 8]);
+    output
+        .onchain_effects
+        .push(OnchainEffect::UpdateTimeoutWindow(
+            target.name.clone(),
+            updated_timeout_window.clone(),
+        ));
+
+    let result = NodeStateProcessing::process_proof(
+        &contracts,
+        &mut timeout_window_changes,
+        &hyli.name,
+        &(
+            hyli.program_id.clone(),
+            hyli.verifier.clone(),
+            TxId::default(),
+            output,
+        ),
     );
 
-    assert_eq!(block.deleted_contracts.len(), 0);
-    assert_eq!(state.contracts.len(), 3);
-    assert_eq!(
-        state
-            .contracts
-            .get(&ContractName::new("contract"))
-            .unwrap()
-            .timeout_window,
-        TimeoutWindow::Timeout(BlockHeight(45))
+    assert!(matches!(result, ProofProcessingResult::Success));
+    assert_target_preserved(
+        &timeout_window_changes,
+        &target.program_id,
+        &updated_timeout_window,
     );
 }
 
@@ -670,15 +696,16 @@ async fn test_hyli_sub_delete() {
         ],
     );
 
+    assert!(block.stateful_events.events.iter().any(|(_, event)| {
+        matches!(event, StatefulEvent::ContractDelete(cn) if cn == &ContractName::new("c2.hyli"))
+    }));
+    assert!(block.stateful_events.events.iter().any(|(_, event)| {
+        matches!(event, StatefulEvent::ContractDelete(cn) if cn == &ContractName::new("sub.c2.hyli"))
+    }));
     assert_eq!(
-        block
-            .deleted_contracts
-            .keys()
-            .map(|dce| dce.0.clone())
-            .collect::<Vec<_>>(),
-        vec!["c2.hyli", "sub.c2.hyli"]
+        state.contracts.keys().collect::<HashSet<_>>(),
+        HashSet::from([&"hyli".into(), &"wallet".into()])
     );
-    assert_eq!(state.contracts.len(), 2);
 }
 
 #[test_log::test(tokio::test)]
@@ -746,7 +773,7 @@ async fn test_register_update_delete_combinations_hyli() {
         let block = state.craft_block_and_handle(2, txs);
 
         assert_eq!(state.contracts.len(), expected_ct);
-        assert_eq!(block.successful_txs.len(), expected_txs);
+        assert_eq!(block.successful_txs().len(), expected_txs);
         info!("done");
     }
 
@@ -792,7 +819,11 @@ async fn test_unknown_contract_and_delete_cleanup() {
 
     // This transaction should be rejected immediately since the contract doesn't exist
     let block = state.craft_block_and_handle(1, vec![unknown_contract_tx.clone().into()]);
-    assert_eq!(block.failed_txs, vec![unknown_contract_tx.hashed()]);
+    assert!(is_failed_or_rejected(
+        &state,
+        &block,
+        &unknown_contract_tx.hashed()
+    ));
 
     // 2. Register a contract
     let register_tx =
@@ -880,7 +911,7 @@ async fn test_custom_timeout_then_upgrade_with_none() {
             program_id: ProgramId(vec![]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name: c1.clone(),
-            timeout_window: Some(TimeoutWindow::Timeout(custom_timeout)),
+            timeout_window: Some(TimeoutWindow::timeout(custom_timeout, custom_timeout)),
             ..Default::default()
         };
         let upgrade_with_timeout = BlobTransaction::new(
@@ -948,7 +979,10 @@ async fn test_custom_timeout_then_upgrade_with_none() {
             program_id: ProgramId(vec![]),
             state_commitment: StateCommitment(vec![4, 5, 6]),
             contract_name: c1.clone(),
-            timeout_window: Some(TimeoutWindow::Timeout(another_custom_timeout)),
+            timeout_window: Some(TimeoutWindow::timeout(
+                another_custom_timeout,
+                another_custom_timeout,
+            )),
             ..Default::default()
         };
         let upgrade_with_another_timeout = BlobTransaction::new(
@@ -1027,7 +1061,7 @@ async fn test_pending_tx_then_contract_upgrade_and_settlement_order() {
     let block3 = state.craft_block_and_handle(3, vec![register_2.clone().into()]);
 
     // Check block3: TX3 should be in failed_txs
-    assert!(block3.failed_txs.contains(&register_2_hash));
+    assert!(is_failed_or_rejected(&state, &block3, &register_2_hash));
 
     // 4. Send another TX to the contract (TX4)
     let tx4 = BlobTransaction::new(
@@ -1055,9 +1089,9 @@ async fn test_pending_tx_then_contract_upgrade_and_settlement_order() {
 
     // 7. Now TX3 (the duplicate register) should have failed, and TX4 should be settled immediately
     // Check block6: TX4 should be settled (successful_txs)
-    assert!(block6.successful_txs.contains(&tx4_hash));
+    assert!(block6.successful_txs().contains(&tx4_hash));
     // TX2 should also be settled
-    assert!(block6.successful_txs.contains(&tx2_hash));
+    assert!(block6.successful_txs().contains(&tx2_hash));
     // Both TX2 and TX4 should be removed from unsettled
     assert!(state.unsettled_transactions.get(&tx2_hash).is_none());
     assert!(state.unsettled_transactions.get(&tx4_hash).is_none());
@@ -1074,7 +1108,7 @@ async fn domino_settlement_after_contract_delete() {
             program_id: ProgramId(vec![]),
             state: StateCommitment(vec![0, 1, 2, 3]),
             verifier: Verifier("test".into()),
-            timeout_window: TimeoutWindow::Timeout(BlockHeight(100)),
+            timeout_window: TimeoutWindow::timeout(BlockHeight(100), BlockHeight(100)),
         },
     );
     let a = ContractName::new("a");
@@ -1125,7 +1159,7 @@ async fn domino_settlement_after_contract_delete() {
     let proof_b = new_proof_tx(&b, &hyli_output_b, &tx_b_id);
     let block_b = state.craft_block_and_handle(7, vec![proof_b.into()]);
     // This should domino through and settle the tx_ab and tx_a if not already settled
-    assert!(block_b.successful_txs.contains(&tx_a_id));
+    assert!(block_b.successful_txs().contains(&tx_a_id));
 }
 
 // Helper function to test multiple delete attempts with different TLD configurations
@@ -1203,9 +1237,10 @@ async fn test_multiple_delete_attempts_helper(tld_name: &str, contract_name: &st
         let block = state.craft_block_and_handle(2, [txs, proofs].concat());
 
         // Verify only the last attempt succeeded
-        assert_eq!(block.successful_txs, expected_successful_tx);
-        assert_eq!(block.failed_txs, expected_failing_tx);
-        assert_eq!(block.deleted_contracts.len(), 1);
+        assert_eq!(block.successful_txs(), expected_successful_tx);
+        for tx_hash in expected_failing_tx {
+            assert!(is_failed_or_rejected(&state, &block, tx_hash));
+        }
         assert_eq!(state.contracts.len(), expected_remaining_contracts);
     }
 
@@ -1608,7 +1643,7 @@ async fn test_multiple_update_attempts_helper(tld_name: &str, contract_name: &st
 
     // Verify failed transactions
     for expected_failed in &expected_failed_txs {
-        assert!(block.failed_txs.contains(expected_failed));
+        assert!(is_failed_or_rejected(&state, &block, expected_failed));
     }
 
     // Add proofs for update_program_id_tld_only
@@ -1646,10 +1681,10 @@ async fn test_multiple_update_attempts_helper(tld_name: &str, contract_name: &st
 
     // Verify successful transactions
     assert!(block_proofs
-        .successful_txs
+        .successful_txs()
         .contains(&update_program_id_tld_only.hashed()));
     assert!(block_proofs
-        .successful_txs
+        .successful_txs()
         .contains(&update_program_id_contract_side_effect.hashed()));
 }
 

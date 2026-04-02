@@ -1,5 +1,9 @@
-use std::{
-    cmp::Ordering,
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
+use core::{
     fmt::Display,
     ops::{Add, Deref, DerefMut, Sub},
 };
@@ -10,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use crate::{utils::TimestampMs, LaneId};
 
 #[derive(
-    Debug,
     Serialize,
     Deserialize,
     Clone,
@@ -23,12 +26,18 @@ use crate::{utils::TimestampMs, LaneId};
     PartialOrd,
 )]
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
-pub struct ConsensusProposalHash(pub String);
+pub struct ConsensusProposalHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);
 pub type BlockHash = ConsensusProposalHash;
 
-impl std::hash::Hash for ConsensusProposalHash {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write(self.0.as_bytes());
+impl core::hash::Hash for ConsensusProposalHash {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        state.write(&self.0);
+    }
+}
+
+impl core::fmt::Debug for ConsensusProposalHash {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "ConsensusProposalHash({})", hex::encode(&self.0))
     }
 }
 
@@ -91,7 +100,7 @@ where
 
 impl<'a> IntoIterator for &'a IndexedBlobs {
     type Item = &'a (BlobIndex, Blob);
-    type IntoIter = std::slice::Iter<'a, (BlobIndex, Blob)>;
+    type IntoIter = core::slice::Iter<'a, (BlobIndex, Blob)>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
@@ -119,6 +128,14 @@ pub struct Calldata {
     pub private_input: Vec<u8>,
 }
 
+impl Calldata {
+    pub fn get_blob(&self) -> Result<&Blob, String> {
+        self.blobs
+            .get(&self.index)
+            .ok_or_else(|| format!("Blob with index {} not found in calldata", self.index.0))
+    }
+}
+
 /// State commitment of the contract.
 #[derive(
     Default, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize,
@@ -126,8 +143,8 @@ pub struct Calldata {
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct StateCommitment(pub Vec<u8>);
 
-impl std::fmt::Debug for StateCommitment {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl core::fmt::Debug for StateCommitment {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         write!(f, "StateCommitment({})", hex::encode(&self.0))
     }
 }
@@ -155,7 +172,6 @@ pub struct Identity(pub String);
     Default,
     Serialize,
     Deserialize,
-    Debug,
     Clone,
     PartialEq,
     Eq,
@@ -166,7 +182,7 @@ pub struct Identity(pub String);
     PartialOrd,
 )]
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
-pub struct TxHash(pub String);
+pub struct TxHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);
 
 #[derive(
     Default,
@@ -199,8 +215,8 @@ impl Add<usize> for BlobIndex {
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct BlobData(pub Vec<u8>);
 
-impl std::fmt::Debug for BlobData {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl core::fmt::Debug for BlobData {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         if self.0.len() > 20 {
             write!(f, "BlobData({}...)", hex::encode(&self.0[..20]))
         } else {
@@ -298,7 +314,7 @@ pub struct StructuredBlobData<Action> {
 pub struct DropEndOfReader;
 
 impl<Action: BorshDeserialize> BorshDeserialize for StructuredBlobData<Action> {
-    fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+    fn deserialize_reader<R: borsh::io::Read>(reader: &mut R) -> borsh::io::Result<Self> {
         let caller = Option::<BlobIndex>::deserialize_reader(reader)?;
         let callees = Option::<Vec<BlobIndex>>::deserialize_reader(reader)?;
         let parameters = Action::deserialize_reader(reader)?;
@@ -311,10 +327,16 @@ impl<Action: BorshDeserialize> BorshDeserialize for StructuredBlobData<Action> {
 }
 
 impl BorshDeserialize for StructuredBlobData<DropEndOfReader> {
-    fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+    fn deserialize_reader<R: borsh::io::Read>(reader: &mut R) -> borsh::io::Result<Self> {
         let caller = Option::<BlobIndex>::deserialize_reader(reader)?;
         let callees = Option::<Vec<BlobIndex>>::deserialize_reader(reader)?;
-        reader.read_to_end(&mut vec![])?;
+        // read_to_end is not available in no_std; drain manually
+        let mut buf = [0u8; 64];
+        loop {
+            if reader.read(&mut buf)? == 0 {
+                break;
+            }
+        }
         let parameters = DropEndOfReader;
         Ok(StructuredBlobData {
             caller,
@@ -330,14 +352,14 @@ impl<Action: BorshSerialize> From<StructuredBlobData<Action>> for BlobData {
     }
 }
 impl<Action: BorshDeserialize> TryFrom<BlobData> for StructuredBlobData<Action> {
-    type Error = std::io::Error;
+    type Error = borsh::io::Error;
 
     fn try_from(val: BlobData) -> Result<StructuredBlobData<Action>, Self::Error> {
         borsh::from_slice(&val.0)
     }
 }
 impl TryFrom<BlobData> for StructuredBlobData<DropEndOfReader> {
-    type Error = std::io::Error;
+    type Error = borsh::io::Error;
 
     fn try_from(val: BlobData) -> Result<StructuredBlobData<DropEndOfReader>, Self::Error> {
         borsh::from_slice(&val.0)
@@ -366,19 +388,10 @@ pub struct Blob {
 }
 
 #[derive(
-    Default,
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-    Eq,
-    PartialEq,
-    Hash,
-    BorshSerialize,
-    BorshDeserialize,
+    Default, Clone, Serialize, Deserialize, Eq, PartialEq, Hash, BorshSerialize, BorshDeserialize,
 )]
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
-pub struct BlobHash(pub String);
+pub struct BlobHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);
 
 #[cfg(feature = "full")]
 impl Hashed<BlobHash> for Blob {
@@ -389,7 +402,19 @@ impl Hashed<BlobHash> for Blob {
         hasher.update(self.contract_name.0.clone());
         hasher.update(self.data.0.clone());
         let hash_bytes = hasher.finalize();
-        BlobHash(hex::encode(hash_bytes))
+        BlobHash(hash_bytes.to_vec())
+    }
+}
+
+impl core::fmt::Debug for BlobHash {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "BlobHash({})", hex::encode(&self.0))
+    }
+}
+
+impl core::fmt::Display for BlobHash {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", hex::encode(&self.0))
     }
 }
 
@@ -409,7 +434,7 @@ impl<Action: BorshSerialize> From<StructuredBlob<Action>> for Blob {
 }
 
 impl<Action: BorshDeserialize> TryFrom<Blob> for StructuredBlob<Action> {
-    type Error = std::io::Error;
+    type Error = borsh::io::Error;
 
     fn try_from(val: Blob) -> Result<StructuredBlob<Action>, Self::Error> {
         let data = borsh::from_slice(&val.data.0)?;
@@ -446,6 +471,24 @@ pub trait ContractAction: Send {
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct ContractName(pub String);
 
+impl ContractName {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.0.is_empty()
+            || !self.0.chars().all(|c| {
+                c.is_ascii_lowercase()
+                    || c.is_ascii_digit()
+                    || c == '-'
+                    || c == '_'
+                    || c == '/'
+                    || c == '.'
+            })
+        {
+            return Err("ContractName must be a non-empty string containing only lowercase letters, digits, hyphens, underscores, slashes or dots.".to_string());
+        }
+        Ok(())
+    }
+}
+
 #[derive(
     Default,
     Debug,
@@ -475,6 +518,12 @@ pub struct Verifier(pub String);
 )]
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct ProgramId(pub Vec<u8>);
+
+impl core::fmt::Display for ProgramId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", hex::encode(&self.0))
+    }
+}
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, BorshSerialize, BorshDeserialize)]
 #[cfg_attr(feature = "full", derive(Serialize, utoipa::ToSchema))]
@@ -507,7 +556,7 @@ impl<'de> Deserialize<'de> for ProofData {
         impl<'de> serde::de::Visitor<'de> for ProofDataVisitor {
             type Value = ProofData;
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
                 formatter.write_str("a Base64 string or a Vec<u8>")
             }
 
@@ -538,9 +587,42 @@ impl<'de> Deserialize<'de> for ProofData {
 }
 
 #[derive(
-    Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
+    Default, Serialize, Deserialize, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
 )]
-pub struct ProofDataHash(pub String);
+pub struct ProofDataHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);
+
+impl From<Vec<u8>> for ProofDataHash {
+    fn from(v: Vec<u8>) -> Self {
+        ProofDataHash(v)
+    }
+}
+impl From<&[u8]> for ProofDataHash {
+    fn from(v: &[u8]) -> Self {
+        ProofDataHash(v.to_vec())
+    }
+}
+impl<const N: usize> From<&[u8; N]> for ProofDataHash {
+    fn from(v: &[u8; N]) -> Self {
+        ProofDataHash(v.to_vec())
+    }
+}
+impl ProofDataHash {
+    pub fn from_hex(s: &str) -> Result<Self, hex::FromHexError> {
+        crate::utils::decode_hex_string_checked(s).map(ProofDataHash)
+    }
+}
+
+impl core::fmt::Debug for ProofDataHash {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "ProofDataHash({})", hex::encode(&self.0))
+    }
+}
+
+impl Display for ProofDataHash {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", hex::encode(&self.0))
+    }
+}
 
 #[cfg(feature = "full")]
 impl Hashed<ProofDataHash> for ProofData {
@@ -549,7 +631,7 @@ impl Hashed<ProofDataHash> for ProofData {
         let mut hasher = sha3::Sha3_256::new();
         hasher.update(self.0.as_slice());
         let hash_bytes = hasher.finalize();
-        ProofDataHash(hex::encode(hash_bytes))
+        ProofDataHash(hash_bytes.to_vec())
     }
 }
 
@@ -575,10 +657,8 @@ impl Hashed<OnchainEffectHash> for OnchainEffect {
         use sha3::{Digest, Sha3_256};
         let mut hasher = Sha3_256::new();
         match self {
-            OnchainEffect::RegisterContractWithConstructor(c) => {
-                hasher.update(c.hashed().0.as_bytes())
-            }
-            OnchainEffect::RegisterContract(c) => hasher.update(c.hashed().0.as_bytes()),
+            OnchainEffect::RegisterContractWithConstructor(c) => hasher.update(&c.hashed().0),
+            OnchainEffect::RegisterContract(c) => hasher.update(&c.hashed().0),
             OnchainEffect::DeleteContract(cn) => hasher.update(cn.0.as_bytes()),
             OnchainEffect::UpdateContractProgramId(cn, pid) => {
                 hasher.update(cn.0.as_bytes());
@@ -588,7 +668,13 @@ impl Hashed<OnchainEffectHash> for OnchainEffect {
                 hasher.update(cn.0.as_bytes());
                 match timeout_window {
                     TimeoutWindow::NoTimeout => hasher.update(0u8.to_le_bytes()),
-                    TimeoutWindow::Timeout(bh) => hasher.update(bh.0.to_le_bytes()),
+                    TimeoutWindow::Timeout {
+                        hard_timeout,
+                        soft_timeout,
+                    } => {
+                        hasher.update(hard_timeout.0.to_le_bytes());
+                        hasher.update(soft_timeout.0.to_le_bytes());
+                    }
                 }
             }
         };
@@ -615,10 +701,13 @@ pub struct HyliOutput {
 
     /// The index of the blob being proven.
     pub index: BlobIndex,
-    /// The blobs that were used by the contract. It has to be a subset of the transactions blobs
+    /// The blobs that were used by the contract. It has to be a subset of the transaction blobs.
     /// It can be the complete list of blobs if the contract used all of them.
+    /// No further semantic checks are enforced by node state: contracts and verifiers are
+    /// responsible for validating that the provided blob subset is sufficient for their logic.
     pub blobs: IndexedBlobs,
-    /// Number of blobs in the transaction. tx_blob_count >= blobs.len()
+    /// Number of blobs in the transaction.
+    /// This must match the originating BlobTransaction's total blob count exactly.
     pub tx_blob_count: usize,
 
     /// TxHash of the BlobTransaction.
@@ -694,14 +783,55 @@ impl<S: Into<String>> From<S> for Identity {
     }
 }
 
+impl ConsensusProposalHash {
+    pub fn new<S: Into<Self>>(s: S) -> Self {
+        s.into()
+    }
+}
+impl From<Vec<u8>> for ConsensusProposalHash {
+    fn from(v: Vec<u8>) -> Self {
+        ConsensusProposalHash(v)
+    }
+}
+impl From<&[u8]> for ConsensusProposalHash {
+    fn from(v: &[u8]) -> Self {
+        ConsensusProposalHash(v.to_vec())
+    }
+}
+impl<const N: usize> From<&[u8; N]> for ConsensusProposalHash {
+    fn from(v: &[u8; N]) -> Self {
+        ConsensusProposalHash(v.to_vec())
+    }
+}
+impl ConsensusProposalHash {
+    pub fn from_hex(s: &str) -> Result<Self, hex::FromHexError> {
+        crate::utils::decode_hex_string_checked(s).map(ConsensusProposalHash)
+    }
+}
+
 impl TxHash {
     pub fn new<S: Into<Self>>(s: S) -> Self {
         s.into()
     }
 }
-impl<S: Into<String>> From<S> for TxHash {
-    fn from(s: S) -> Self {
-        TxHash(s.into())
+impl From<Vec<u8>> for TxHash {
+    fn from(v: Vec<u8>) -> Self {
+        TxHash(v)
+    }
+}
+impl From<&[u8]> for TxHash {
+    fn from(v: &[u8]) -> Self {
+        TxHash(v.to_vec())
+    }
+}
+impl<const N: usize> From<&[u8; N]> for TxHash {
+    fn from(v: &[u8; N]) -> Self {
+        TxHash(v.to_vec())
+    }
+}
+impl TxHash {
+    pub fn from_hex(s: &str) -> Result<Self, hex::FromHexError> {
+        crate::utils::decode_hex_string_checked(s).map(TxHash)
     }
 }
 
@@ -748,27 +878,32 @@ impl From<&[u8]> for ProgramId {
 }
 
 impl Display for TxHash {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", &self.0)
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", hex::encode(&self.0))
+    }
+}
+impl core::fmt::Debug for TxHash {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "TxHash({})", hex::encode(&self.0))
     }
 }
 impl Display for BlobIndex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", &self.0)
     }
 }
 impl Display for ContractName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", &self.0)
     }
 }
 impl Display for Identity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", &self.0)
     }
 }
 impl Display for Verifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", &self.0)
     }
 }
@@ -829,38 +964,60 @@ impl Add<BlockHeight> for BlockHeight {
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub enum TimeoutWindow {
     NoTimeout,
-    Timeout(BlockHeight),
+    Timeout {
+        // The hard_timeout is the timeout value used to set a transaction's timeout when the blobs for the contract are NOT proved.
+        // It is expected that hard_timeout <= soft_timeout.
+        hard_timeout: BlockHeight,
+        // The soft_timeout is the timeout value used when the blobs for the contract ARE proved.
+        // In other words, if blobs are proved, soft_timeout is used; if not proved, hard_timeout is used.
+        soft_timeout: BlockHeight,
+    },
 }
-
-impl PartialOrd for TimeoutWindow {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for TimeoutWindow {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match (self, other) {
-            (TimeoutWindow::NoTimeout, TimeoutWindow::NoTimeout) => Ordering::Equal,
-            (TimeoutWindow::Timeout(_), TimeoutWindow::NoTimeout) => Ordering::Less,
-            (TimeoutWindow::NoTimeout, TimeoutWindow::Timeout(_)) => Ordering::Greater,
-            (TimeoutWindow::Timeout(a), TimeoutWindow::Timeout(b)) => a.cmp(b),
-        }
-    }
-}
-
 impl Display for TimeoutWindow {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match &self {
             TimeoutWindow::NoTimeout => write!(f, "NoTimeout"),
-            TimeoutWindow::Timeout(height) => write!(f, "Timeout({})", height.0),
+            TimeoutWindow::Timeout {
+                hard_timeout,
+                soft_timeout,
+            } => write!(f, "Timeout({},{})", hard_timeout.0, soft_timeout.0),
         }
     }
 }
 
 impl Default for TimeoutWindow {
     fn default() -> Self {
-        TimeoutWindow::Timeout(BlockHeight(100))
+        TimeoutWindow::timeout(BlockHeight(100), BlockHeight(100))
+    }
+}
+
+/// Creates a new timeout window with hard and soft timeout block heights.
+///
+/// This function automatically ensures that `hard_timeout <= soft_timeout` by
+/// swapping the parameters if they are provided in the wrong order. If the
+/// `hard_timeout` is greater than `soft_timeout`, the values will be swapped
+/// internally to maintain the invariant that hard timeout should occur before
+/// or at the same time as the soft timeout.
+///
+/// # Parameters
+///
+/// * `hard_timeout` - The block height for the hard timeout (will be the earlier timeout)
+/// * `soft_timeout` - The block height for the soft timeout (will be the later timeout)
+///
+/// # Returns
+///
+/// A `TimeoutWindow::Timeout` variant with properly ordered timeout values.
+impl TimeoutWindow {
+    pub fn timeout(hard_timeout: BlockHeight, soft_timeout: BlockHeight) -> Self {
+        let (hard_timeout, soft_timeout) = if hard_timeout <= soft_timeout {
+            (hard_timeout, soft_timeout)
+        } else {
+            (soft_timeout, hard_timeout)
+        };
+        TimeoutWindow::Timeout {
+            hard_timeout,
+            soft_timeout,
+        }
     }
 }
 
@@ -900,12 +1057,18 @@ impl Hashed<TxHash> for RegisterContractAction {
         if let Some(timeout_window) = &self.timeout_window {
             match timeout_window {
                 TimeoutWindow::NoTimeout => hasher.update(0u8.to_le_bytes()),
-                TimeoutWindow::Timeout(bh) => hasher.update(bh.0.to_le_bytes()),
+                TimeoutWindow::Timeout {
+                    hard_timeout,
+                    soft_timeout,
+                } => {
+                    hasher.update(hard_timeout.0.to_le_bytes());
+                    hasher.update(soft_timeout.0.to_le_bytes());
+                }
             }
         }
         // We don't hash the constructor metadata.
         let hash_bytes = hasher.finalize();
-        TxHash(hex::encode(hash_bytes))
+        TxHash(hash_bytes.to_vec())
     }
 }
 
@@ -1064,11 +1227,17 @@ impl Hashed<TxHash> for RegisterContractEffect {
         if let Some(timeout_window) = &self.timeout_window {
             match timeout_window {
                 TimeoutWindow::NoTimeout => hasher.update(0u8.to_le_bytes()),
-                TimeoutWindow::Timeout(bh) => hasher.update(bh.0.to_le_bytes()),
+                TimeoutWindow::Timeout {
+                    hard_timeout,
+                    soft_timeout,
+                } => {
+                    hasher.update(hard_timeout.0.to_le_bytes());
+                    hasher.update(soft_timeout.0.to_le_bytes());
+                }
             }
         }
         let hash_bytes = hasher.finalize();
-        TxHash(hex::encode(hash_bytes))
+        TxHash(hash_bytes.to_vec())
     }
 }
 
@@ -1095,88 +1264,43 @@ pub mod base64_field {
 }
 
 #[cfg(test)]
-mod tests_timeout_order {
+mod tests {
     use super::*;
 
     #[test]
-    fn test_timeout_vs_timeout() {
-        let a = TimeoutWindow::Timeout(BlockHeight(5));
-        let b = TimeoutWindow::Timeout(BlockHeight(10));
-        assert!(a < b);
-        assert!(b > a);
-        assert_eq!(a.partial_cmp(&b), Some(Ordering::Less));
-        assert_eq!(b.partial_cmp(&a), Some(Ordering::Greater));
+    fn consensus_proposal_hash_from_hex_str_roundtrip() {
+        let hex_str = "74657374";
+        let hash = ConsensusProposalHash::from_hex(hex_str).expect("consensus hash hex");
+        assert_eq!(hash.0, b"test".to_vec());
+        assert_eq!(format!("{hash}"), hex_str);
+        let json = serde_json::to_string(&hash).expect("serialize consensus hash");
+        assert_eq!(json, "\"74657374\"");
+        let decoded: ConsensusProposalHash =
+            serde_json::from_str(&json).expect("deserialize consensus hash");
+        assert_eq!(decoded, hash);
     }
 
     #[test]
-    fn test_timeout_vs_same_timeout() {
-        let a = TimeoutWindow::Timeout(BlockHeight(7));
-        let b = TimeoutWindow::Timeout(BlockHeight(7));
-        assert_eq!(a, b);
-        assert_eq!(a.cmp(&b), Ordering::Equal);
-        assert_eq!(a.partial_cmp(&b), Some(Ordering::Equal));
+    fn txhash_from_hex_str_roundtrip() {
+        let hex_str = "746573745f7478";
+        let hash = TxHash::from_hex(hex_str).expect("txhash hex");
+        assert_eq!(hash.0, b"test_tx".to_vec());
+        assert_eq!(format!("{hash}"), hex_str);
+        let json = serde_json::to_string(&hash).expect("serialize tx hash");
+        assert_eq!(json, "\"746573745f7478\"");
+        let decoded: TxHash = serde_json::from_str(&json).expect("deserialize tx hash");
+        assert_eq!(decoded, hash);
     }
 
     #[test]
-    fn test_timeout_vs_no_timeout() {
-        let a = TimeoutWindow::Timeout(BlockHeight(15));
-        let b = TimeoutWindow::NoTimeout;
-        assert!(a < b);
-        assert_eq!(a.cmp(&b), Ordering::Less);
-        assert_eq!(a.partial_cmp(&b), Some(Ordering::Less));
-    }
-
-    #[test]
-    fn test_no_timeout_vs_timeout() {
-        let a = TimeoutWindow::NoTimeout;
-        let b = TimeoutWindow::Timeout(BlockHeight(1));
-        assert!(a > b);
-        assert_eq!(a.cmp(&b), Ordering::Greater);
-        assert_eq!(a.partial_cmp(&b), Some(Ordering::Greater));
-    }
-
-    #[test]
-    fn test_no_timeout_vs_no_timeout() {
-        let a = TimeoutWindow::NoTimeout;
-        let b = TimeoutWindow::NoTimeout;
-        assert_eq!(a, b);
-        assert_eq!(a.cmp(&b), Ordering::Equal);
-        assert_eq!(a.partial_cmp(&b), Some(Ordering::Equal));
-    }
-
-    #[test]
-    fn test_min_timeout_is_always_selected() {
-        let timeout = TimeoutWindow::Timeout(BlockHeight(42));
-        let no_timeout = TimeoutWindow::NoTimeout;
-
-        // min(NoTimeout, Timeout(42)) == Timeout(42)
-        assert_eq!(std::cmp::min(no_timeout.clone(), timeout.clone()), timeout);
-
-        // min(Timeout(42), NoTimeout) == Timeout(42)
-        assert_eq!(std::cmp::min(timeout.clone(), no_timeout.clone()), timeout);
-    }
-
-    #[test]
-    fn test_min_among_multiple_timeout_windows() {
-        use TimeoutWindow::{NoTimeout, Timeout};
-
-        let timeouts = [
-            NoTimeout,
-            Timeout(BlockHeight(100)),
-            Timeout(BlockHeight(50)),
-            NoTimeout,
-            Timeout(BlockHeight(200)),
-            Timeout(BlockHeight(10)),
-        ];
-
-        // Utiliser min avec Iterator
-        let actual_min = timeouts
-            .iter()
-            .min()
-            .expect("La liste ne doit pas être vide");
-
-        let expected_min = &Timeout(BlockHeight(10));
-
-        assert_eq!(actual_min, expected_min);
+    fn proof_data_hash_from_hex_str_roundtrip() {
+        let hex_str = "0x74657374";
+        let hash = ProofDataHash::from_hex(hex_str).expect("proof hash hex");
+        assert_eq!(hash.0, b"test".to_vec());
+        assert_eq!(hex::encode(&hash.0), "74657374");
+        let json = serde_json::to_string(&hash).expect("serialize proof hash");
+        assert_eq!(json, "\"74657374\"");
+        let decoded: ProofDataHash = serde_json::from_str(&json).expect("deserialize proof hash");
+        assert_eq!(decoded, hash);
     }
 }

@@ -1,8 +1,14 @@
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{
     de::{self, Visitor},
     Deserialize, Serialize,
 };
+#[cfg(feature = "full")]
+use sha3::Digest;
 
 use crate::*;
 
@@ -89,7 +95,7 @@ impl<'de> Deserialize<'de> for ValidatorPublicKey {
         impl Visitor<'_> for ValidatorPublicKeyVisitor {
             type Value = ValidatorPublicKey;
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
                 formatter.write_str("a hex string representing a ValidatorPublicKey")
             }
 
@@ -106,8 +112,8 @@ impl<'de> Deserialize<'de> for ValidatorPublicKey {
     }
 }
 
-impl std::fmt::Debug for ValidatorPublicKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for ValidatorPublicKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("ValidatorPubK")
             .field(&hex::encode(
                 self.0.get(..HASH_DISPLAY_SIZE).unwrap_or(&self.0),
@@ -116,8 +122,8 @@ impl std::fmt::Debug for ValidatorPublicKey {
     }
 }
 
-impl std::fmt::Display for ValidatorPublicKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ValidatorPublicKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
             "{}",
@@ -129,19 +135,127 @@ impl std::fmt::Display for ValidatorPublicKey {
 #[derive(
     Clone,
     Debug,
-    Default,
-    Serialize,
-    Deserialize,
     BorshSerialize,
     BorshDeserialize,
+    Serialize,
+    Deserialize,
     PartialEq,
     Eq,
     Hash,
     Ord,
     PartialOrd,
 )]
-#[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
-pub struct LaneId(pub ValidatorPublicKey);
+#[serde(try_from = "String", into = "String")]
+pub struct LaneId {
+    pub operator: ValidatorPublicKey,
+    pub suffix: String,
+}
+
+pub type LaneSuffix = String;
+
+#[cfg(feature = "full")]
+impl utoipa::PartialSchema for LaneId {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        String::schema()
+    }
+}
+
+#[cfg(feature = "full")]
+impl utoipa::ToSchema for LaneId {}
+
+impl Default for LaneId {
+    fn default() -> Self {
+        LaneId::with_suffix(ValidatorPublicKey::default(), LaneId::DEFAULT_SUFFIX)
+    }
+}
+
+impl LaneId {
+    pub const DEFAULT_SUFFIX: &'static str = "default";
+
+    pub fn new(operator: ValidatorPublicKey) -> Self {
+        Self::with_suffix(operator, Self::DEFAULT_SUFFIX)
+    }
+
+    pub fn with_suffix(operator: ValidatorPublicKey, suffix: impl Into<String>) -> Self {
+        Self {
+            operator,
+            suffix: suffix.into(),
+        }
+    }
+
+    pub fn operator(&self) -> &ValidatorPublicKey {
+        &self.operator
+    }
+
+    pub fn suffix(&self) -> &str {
+        &self.suffix
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(self.operator.0.len() + 1 + self.suffix.len());
+        bytes.extend_from_slice(&self.operator.0);
+        bytes.push(b'-');
+        bytes.extend_from_slice(self.suffix.as_bytes());
+        bytes
+    }
+
+    #[cfg(feature = "full")]
+    pub fn update_hasher<D: Digest>(&self, hasher: &mut D) {
+        hasher.update(&self.operator.0);
+        hasher.update(b"-");
+        hasher.update(self.suffix.as_bytes());
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        if let Some((hex_part, suffix)) = value.split_once('-') {
+            if suffix.is_empty() {
+                return Err("LaneId suffix cannot be empty".to_string());
+            }
+            let bytes = hex::decode(hex_part).map_err(|e| e.to_string())?;
+            Ok(LaneId::with_suffix(ValidatorPublicKey(bytes), suffix))
+        } else {
+            let bytes = hex::decode(value).map_err(|e| e.to_string())?;
+            Ok(LaneId::with_suffix(
+                ValidatorPublicKey(bytes),
+                LaneId::DEFAULT_SUFFIX,
+            ))
+        }
+    }
+}
+
+impl From<ValidatorPublicKey> for LaneId {
+    fn from(value: ValidatorPublicKey) -> Self {
+        LaneId::new(value)
+    }
+}
+
+impl core::str::FromStr for LaneId {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::parse(value)
+    }
+}
+
+impl TryFrom<String> for LaneId {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::parse(&value)
+    }
+}
+
+impl From<LaneId> for String {
+    fn from(value: LaneId) -> Self {
+        value.to_string()
+    }
+}
+
+impl core::fmt::Display for LaneId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}-{}", hex::encode(&self.operator.0), self.suffix)
+    }
+}
 
 // Cumulative size of the lane from the beginning
 #[derive(
@@ -161,15 +275,15 @@ pub struct LaneId(pub ValidatorPublicKey);
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct LaneBytesSize(pub u64); // 16M Terabytes, is it enough ?
 
-impl std::ops::Add<usize> for LaneBytesSize {
+impl core::ops::Add<usize> for LaneBytesSize {
     type Output = Self;
     fn add(self, other: usize) -> Self {
         LaneBytesSize(self.0 + other as u64)
     }
 }
 
-impl std::fmt::Display for LaneBytesSize {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for LaneBytesSize {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if self.0 < 1024 {
             write!(f, "{} B", self.0)
         } else if self.0 < 1024 * 1024 {

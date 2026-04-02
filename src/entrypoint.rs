@@ -1,14 +1,14 @@
 #![allow(clippy::expect_used, reason = "Fail on misconfiguration")]
 
 use crate::{
-    bus::{metrics::BusMetrics, SharedMessageBus},
-    consensus::Consensus,
-    data_availability::DataAvailability,
+    bus::SharedMessageBus,
+    consensus::{Consensus, ConsensusStore},
+    data_availability::{local_da_replayer::LocalDaReplayer, DataAvailability},
     explorer::Explorer,
     genesis::Genesis,
     indexer::Indexer,
-    mempool::Mempool,
-    model::{api::NodeInfo, SharedRunContext},
+    mempool::{dissemination::DisseminationManager, Mempool},
+    model::{api::NodeInfo, ContractName, SharedRunContext},
     p2p::P2P,
     rest::{ApiDoc, RestApi, RestApiRunContext},
     single_node_consensus::SingleNodeConsensus,
@@ -17,43 +17,46 @@ use crate::{
         conf::{self, P2pMode},
         modules::ModulesHandler,
     },
+    verifier_workers::ProofVerifierService,
 };
 use anyhow::{bail, Context, Result};
 use axum::Router;
 use hydentity::Hydentity;
+use hyli_bus::modules::write_manifest;
+use hyli_bus::modules::ModulesHandlerOptions;
 use hyli_crypto::SharedBlstCrypto;
+#[cfg(feature = "monitoring")]
+use hyli_modules::telemetry::global_meter_or_panic;
 use hyli_modules::{
     log_error,
     modules::{
-        admin::{AdminApi, AdminApiRunContext, NodeAdminApiClient},
+        admin::{AdminApi, AdminApiRunContext, CatchupStoreResponse, NodeAdminApiClient},
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
+        contract_listener::{ContractListener, ContractListenerConf},
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         da_listener::DAListenerConf,
         files::{CONSENSUS_BIN, NODE_STATE_BIN},
-        gcs_uploader::{GcsUploader, GcsUploaderCtx},
-        signed_da_listener::SignedDAListener,
         websocket::WebSocketModule,
-        BuildApiContextInner,
+        BuildApiContextInner, Module,
     },
     node_state::{
         module::{NodeStateCtx, NodeStateModule},
         NodeStateStore,
     },
+    utils::db::use_fresh_db,
 };
+use hyli_net::clock::TimestampMsClock;
+use hyli_test_containers::{postgres::Postgres, runners::AsyncRunner, ContainerAsync, ImageExt};
 use hyllar::Hyllar;
-use prometheus::Registry;
 use smt_token::account::AccountSMT;
 use std::{
-    fs::{self, File},
-    io::Write,
+    collections::HashSet,
+    fs,
     path::PathBuf,
     sync::{Arc, Mutex},
+    time::Duration,
 };
-use testcontainers_modules::{
-    postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
-};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use utoipa::OpenApi;
 
 pub struct RunPg {
@@ -72,13 +75,21 @@ impl RunPg {
         }
 
         info!("🐘 Starting postgres DB with default settings for the indexer");
-        let pg = Postgres::default()
-            .with_tag("17-alpine")
-            .with_cmd(["postgres", "-c", "log_statement=all"])
-            .start()
-            .await?;
+        let mut pg_builder = Postgres::default().with_tag("17-alpine").with_cmd([
+            "postgres",
+            "-c",
+            "log_statement=all",
+        ]);
 
-        std::thread::sleep(std::time::Duration::from_secs(3));
+        let fixed_port: Option<u16> = std::env::var("HYLI_PG_HOST_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok());
+        if let Some(port) = fixed_port {
+            info!("🐘 Using fixed postgres host port {}", port);
+            pg_builder = pg_builder.with_mapped_port(port, 5432u16);
+        }
+
+        let pg = pg_builder.start().await?;
 
         config.database_url = format!(
             "postgres://postgres:postgres@localhost:{}/postgres",
@@ -188,45 +199,150 @@ pub fn welcome_message(conf: &conf::Conf) {
 }
 
 pub async fn main_loop(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> Result<()> {
-    let mut handler = common_main(config, crypto).await?;
+    let bus = SharedMessageBus::new();
+    let mut handler = common_main(config, crypto, bus).await?;
     handler.exit_loop().await?;
 
     Ok(())
 }
 
 pub async fn main_process(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> Result<()> {
-    let mut handler = common_main(config, crypto).await?;
+    let bus = SharedMessageBus::new();
+    let mut handler = common_main(config, crypto, bus).await?;
     handler.exit_process().await?;
 
     Ok(())
 }
 
-async fn common_main(
-    config: conf::Conf,
+#[derive(Clone)]
+struct CatchupPeer {
+    address: String,
+    height: u64,
+}
+
+async fn probe_fast_catchup_peer(peer: String, timeout_secs: u64) -> Option<CatchupPeer> {
+    info!("Checking fast catchup availability from {}", peer);
+    let client = match NodeAdminApiClient::new(peer.clone()) {
+        Ok(client) => client,
+        Err(e) => {
+            error!("Failed to create client for {}: {:?}", peer, e);
+            return None;
+        }
+    };
+
+    let node_state_height =
+        match tokio::time::timeout(Duration::from_secs(timeout_secs), client.get_block_height())
+            .await
+        {
+            Ok(Ok(height)) => height,
+            Ok(Err(e)) => {
+                error!("Failed to get node state height from {}: {:?}", peer, e);
+                return None;
+            }
+            Err(_) => {
+                error!(
+                    "Timed out while getting node state height from {} after {}s",
+                    peer, timeout_secs
+                );
+                return None;
+            }
+        };
+
+    info!(
+        "Peer {} is catchup candidate at height {}",
+        peer, node_state_height.0
+    );
+
+    Some(CatchupPeer {
+        address: peer,
+        height: node_state_height.0,
+    })
+}
+
+async fn pick_best_fast_catchup_peer(peers: &[String], timeout_secs: u64) -> Option<CatchupPeer> {
+    let mut probes = tokio::task::JoinSet::new();
+    for peer in peers {
+        probes.spawn(probe_fast_catchup_peer(peer.clone(), timeout_secs));
+    }
+
+    let mut best_peer: Option<CatchupPeer> = None;
+
+    while let Some(probe_result) = probes.join_next().await {
+        match probe_result {
+            Ok(Some(candidate)) => {
+                if best_peer
+                    .as_ref()
+                    .map(|best| candidate.height > best.height)
+                    .unwrap_or(true)
+                {
+                    best_peer = Some(candidate);
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                error!("Fast catchup probe task failed: {:?}", e);
+            }
+        }
+    }
+
+    best_peer
+}
+
+async fn fetch_fast_catchup_store(
+    best_peer: &CatchupPeer,
+    timeout_secs: u64,
+) -> Result<CatchupStoreResponse> {
+    info!(
+        "Attempting fast catchup from most up-to-date peer {} at height {}",
+        best_peer.address, best_peer.height
+    );
+
+    let client = NodeAdminApiClient::new(best_peer.address.clone())
+        .context("failed to create client for best peer")?;
+    match tokio::time::timeout(
+        Duration::from_secs(timeout_secs),
+        client.get_catchup_store(),
+    )
+    .await
+    {
+        Ok(Ok(response)) => Ok(response),
+        Ok(Err(e)) => Err(e).context("best peer failed to provide catchup store"),
+        Err(_) => bail!(
+            "best peer {} timed out after {}s",
+            best_peer.address,
+            timeout_secs
+        ),
+    }
+}
+
+pub async fn common_main(
+    mut config: conf::Conf,
     crypto: Option<SharedBlstCrypto>,
+    bus: SharedMessageBus,
 ) -> Result<ModulesHandler> {
-    let config = Arc::new(config);
+    let mut handler = ModulesHandler::new(
+        &bus,
+        config.data_directory.clone(),
+        ModulesHandlerOptions {
+            backup_on_invalid_manifest: config.backup_on_invalid_manifest,
+        },
+    )?;
+
+    // For convenience, when starting the node from scratch with an unspecified DB, we'll create a new one.
+    // Handle this configuration rewrite before we print anything.
+    if config.run_explorer || config.run_indexer {
+        use_fresh_db(&config.data_directory, &mut config.database_url).await?;
+    }
 
     welcome_message(&config);
     info!("Starting node with config: {:?}", &config);
 
-    let registry = Registry::new();
-    // Init global metrics meter we expose as an endpoint
-    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-        .with_reader(
-            opentelemetry_prometheus::exporter()
-                .with_registry(registry.clone())
-                .build()
-                .context("starting prometheus exporter")?,
-        )
-        .build();
-
-    opentelemetry::global::set_meter_provider(provider.clone());
+    // Capture node start timestamp for use across all modules
+    let start_timestamp = TimestampMsClock::now();
 
     #[cfg(feature = "monitoring")]
     {
-        let scope = opentelemetry::InstrumentationScope::builder(config.id.clone()).build();
-        let my_meter = opentelemetry::global::meter_with_scope(scope);
+        let my_meter = global_meter_or_panic();
         let alloc_metric = my_meter.u64_gauge("malloc_allocated_size").build();
         let alloc_metric2 = my_meter.u64_gauge("malloc_allocations").build();
         let latency_metric = my_meter.u64_histogram("tokio_latency").build();
@@ -250,10 +366,6 @@ async fn common_main(
         });
     }
 
-    let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
-
-    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
-
     let build_api_ctx = Arc::new(BuildApiContextInner {
         router: Mutex::new(Some(Router::new())),
         openapi: Mutex::new(ApiDoc::openapi()),
@@ -265,48 +377,101 @@ async fn common_main(
     if config.run_fast_catchup {
         let consensus_path = config.data_directory.join(CONSENSUS_BIN);
         let node_state_path = config.data_directory.join(NODE_STATE_BIN);
+        // Check states exist and skip catchup if so.
+        if !consensus_path.exists() || !node_state_path.exists() {
+            let mut catchup_response = None;
+            let mut bootstrap_failure_reason: Option<String> = None;
 
-        // Check states exist and skip catchup if so
-        if config.fast_catchup_override || !consensus_path.exists() || !node_state_path.exists() {
-            let catchup_from = config.fast_catchup_from.clone();
-            info!("Catching up from {} with trust", catchup_from);
-
-            let client = NodeAdminApiClient::new(catchup_from.clone())?;
-
-            let catchup_response = client
-                .get_catchup_store()
-                .await
-                .context("Getting catchup data")?;
-
-            node_state_override =
-                borsh::from_slice(catchup_response.node_state_store.as_slice()).ok();
-
-            if consensus_path.exists() {
-                _ = fs::remove_file(&consensus_path);
-                info!("Removed old consensus file at {}", consensus_path.display());
+            if config.fast_catchup_peers.is_empty() {
+                bootstrap_failure_reason = Some("no peers configured".to_string());
+            } else {
+                let best_peer = pick_best_fast_catchup_peer(
+                    &config.fast_catchup_peers,
+                    config.fast_catchup_timeout_secs,
+                )
+                .await;
+                if let Some(best_peer) = best_peer {
+                    match fetch_fast_catchup_store(&best_peer, config.fast_catchup_timeout_secs)
+                        .await
+                    {
+                        Ok(response) => {
+                            info!("Successfully caught up from {}", best_peer.address);
+                            catchup_response = Some(response);
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to catch up from best peer {}: {:?}",
+                                best_peer.address, e
+                            );
+                            bootstrap_failure_reason = Some(e.to_string());
+                        }
+                    }
+                } else {
+                    bootstrap_failure_reason =
+                        Some("no peers responded with a block height".to_string());
+                }
             }
 
-            if node_state_path.exists() {
-                _ = fs::remove_file(&node_state_path);
-                info!(
-                    "Removed old node state file at {}",
-                    node_state_path.display()
+            if let Some(catchup_response) = catchup_response {
+                let consensus_store: ConsensusStore =
+                    borsh::from_slice(catchup_response.consensus_store.as_slice())
+                        .context("Deserializing consensus catchup store")?;
+                let node_state_store: NodeStateStore =
+                    borsh::from_slice(catchup_response.node_state_store.as_slice())
+                        .context("Deserializing node state catchup store")?;
+                node_state_override = Some(node_state_store.clone());
+
+                if consensus_path.exists() {
+                    _ = fs::remove_file(&consensus_path);
+                    info!("Removed old consensus file at {}", consensus_path.display());
+                }
+
+                if node_state_path.exists() {
+                    _ = fs::remove_file(&node_state_path);
+                    info!(
+                        "Removed old node state file at {}",
+                        node_state_path.display()
+                    );
+                }
+
+                let consensus_checksum = log_error!(
+                    Consensus::save_on_disk(
+                        &config.data_directory,
+                        CONSENSUS_BIN.as_ref(),
+                        &consensus_store
+                    ),
+                    "Saving consensus store"
+                )?;
+
+                let node_state_checksum = log_error!(
+                    NodeStateModule::save_on_disk(
+                        &config.data_directory,
+                        NODE_STATE_BIN.as_ref(),
+                        &node_state_store,
+                    ),
+                    "Saving node state store"
+                )?;
+
+                log_error!(
+                    write_manifest(
+                        &config.data_directory,
+                        &[
+                            (consensus_path, consensus_checksum),
+                            (node_state_path, node_state_checksum),
+                        ],
+                    ),
+                    "Writing checksum manifest for fast catchup stores"
+                )?;
+            } else {
+                let reason = bootstrap_failure_reason
+                    .unwrap_or_else(|| "no peer responded successfully".to_string());
+                warn!(
+                    "Fast catchup bootstrap failed ({}). Disabling fast catchup for this run and continuing normal startup.",
+                    reason
                 );
+                config.run_fast_catchup = false;
+                config.fast_catchup_backfill = false;
             }
-
-            _ = log_error!(
-                File::create(consensus_path)
-                    .and_then(|mut file| file.write_all(&catchup_response.consensus_store))
-                    .context("Writing consensus catchup store to disk"),
-                "Saving consensus store"
-            );
-
-            _ = log_error!(
-                File::create(node_state_path)
-                    .and_then(|mut file| file.write_all(&catchup_response.node_state_store))
-                    .context("Writing node state catchup store to disk"),
-                "Saving node state store"
-            );
         } else {
             info!(
                 "Skipping fast catchup, {} and {} already exist in {}",
@@ -317,16 +482,20 @@ async fn common_main(
         }
     }
 
-    let mut handler = ModulesHandler::new(&bus).await;
+    let config = Arc::new(config);
 
     if config.run_indexer {
-        if config.gcs.save_proofs || config.gcs.save_blocks {
-            handler
-                .build_module::<GcsUploader>(GcsUploaderCtx {
-                    gcs_config: config.gcs.clone(),
-                    data_directory: config.data_directory.clone(),
-                })
-                .await?;
+        let mut csi_contracts: HashSet<ContractName> = [
+            ContractName::from("hyllar"),
+            ContractName::from("hydentity"),
+            ContractName::from("oranj"),
+            ContractName::from("oxygen"),
+            ContractName::from("vitamin"),
+        ]
+        .into_iter()
+        .collect();
+        if std::env::var("RUN_HYLLAR2_CSI").is_ok() {
+            csi_contracts.insert(ContractName::from("hyllar2"));
         }
 
         handler
@@ -336,13 +505,16 @@ async fn common_main(
                 api: build_api_ctx.clone(),
             })
             .await?;
-        handler
-            .build_module::<ContractStateIndexer<Hyllar>>(ContractStateIndexerCtx {
-                contract_name: "hyllar2".into(),
-                data_directory: config.data_directory.clone(),
-                api: build_api_ctx.clone(),
-            })
-            .await?;
+        // Used in amm_tests for now.
+        if std::env::var("RUN_HYLLAR2_CSI").is_ok() {
+            handler
+                .build_module::<ContractStateIndexer<Hyllar>>(ContractStateIndexerCtx {
+                    contract_name: "hyllar2".into(),
+                    data_directory: config.data_directory.clone(),
+                    api: build_api_ctx.clone(),
+                })
+                .await?;
+        }
         handler
             .build_module::<ContractStateIndexer<Hydentity>>(ContractStateIndexerCtx {
                 contract_name: "hydentity".into(),
@@ -374,6 +546,15 @@ async fn common_main(
         handler
             .build_module::<Indexer>((config.clone(), build_api_ctx.clone()))
             .await?;
+        handler
+            .build_module::<ContractListener>(ContractListenerConf {
+                database_url: config.database_url.clone(),
+                data_directory: config.data_directory.clone(),
+                contracts: csi_contracts,
+                poll_interval: Duration::from_millis(50),
+                replay_settled_from_start: false,
+            })
+            .await?;
     }
 
     if config.run_explorer {
@@ -383,6 +564,11 @@ async fn common_main(
     }
 
     if config.p2p.mode != conf::P2pMode::None {
+        let proof_verifiers = Arc::new(
+            ProofVerifierService::from_config(&config.verifier_workers)
+                .await
+                .context("initializing verifier workers")?,
+        );
         let ctx = SharedRunContext {
             config: config.clone(),
             api: build_api_ctx.clone(),
@@ -393,6 +579,8 @@ async fn common_main(
             start_height: node_state_override
                 .as_ref()
                 .map(|node_state| node_state.current_height),
+            start_timestamp,
+            proof_verifiers,
         };
 
         handler
@@ -407,6 +595,9 @@ async fn common_main(
             .build_module::<DataAvailability>(ctx.clone())
             .await?;
 
+        handler
+            .build_module::<DisseminationManager>(ctx.clone())
+            .await?;
         handler.build_module::<Mempool>(ctx.clone()).await?;
 
         handler.build_module::<Genesis>(ctx.clone()).await?;
@@ -423,14 +614,18 @@ async fn common_main(
 
         handler.build_module::<P2P>(ctx.clone()).await?;
     } else if config.run_indexer {
-        handler
-            .build_module::<SignedDAListener>(DAListenerConf {
+        LocalDaReplayer::build_bus_only_source(
+            &mut handler,
+            DAListenerConf {
                 data_directory: config.data_directory.clone(),
                 da_read_from: config.da_read_from.clone(),
                 start_block: None,
                 timeout_client_secs: config.da_timeout_client_secs,
-            })
-            .await?;
+                da_fallback_addresses: config.da_fallback_addresses.clone(),
+                processor_config: (),
+            },
+        )
+        .await?;
     }
 
     if config.websocket.enabled {
@@ -460,20 +655,17 @@ async fn common_main(
             .clone();
 
         handler
-            .build_module::<RestApi>(
-                RestApiRunContext::new(
-                    config.rest_server_port,
-                    NodeInfo {
-                        id: config.id.clone(),
-                        pubkey: crypto.as_ref().map(|c| c.validator_pubkey()).cloned(),
-                        da_address: config.da_public_address.clone(),
-                    },
-                    router.clone(),
-                    config.rest_server_max_body_size,
-                    openapi,
-                )
-                .with_registry(registry),
-            )
+            .build_module::<RestApi>(RestApiRunContext::new(
+                config.rest_server_port,
+                NodeInfo {
+                    id: config.id.clone(),
+                    pubkey: crypto.as_ref().map(|c| c.validator_pubkey()).cloned(),
+                    da_address: config.da_public_address.clone(),
+                },
+                router.clone(),
+                config.rest_server_max_body_size,
+                openapi,
+            ))
             .await?;
     }
 

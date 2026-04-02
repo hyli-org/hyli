@@ -1,16 +1,16 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
-use clap::{Parser, command};
+use clap::Parser;
 
-use hyli_contract_sdk::BlockHeight;
 use hyli_modules::{
-    bus::{SharedMessageBus, metrics::BusMetrics},
+    bus::SharedMessageBus,
     modules::{
-        ModulesHandler,
+        ModulesHandler, ModulesHandlerOptions,
+        block_processor::BusOnlyProcessor,
         da_listener::DAListenerConf,
+        da_listener::SignedDAListener,
         gcs_uploader::{GCSConf, GcsUploader, GcsUploaderCtx},
-        signed_da_listener::SignedDAListener,
     },
     utils::logger::setup_tracing,
 };
@@ -27,26 +27,46 @@ pub type SharedConf = Arc<GcsUploaderCtx>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install the default crypto provider for rustls
+    // This is required because rustls 0.23.x cannot automatically determine
+    // which crypto provider to use when both aws-lc-rs and ring are present
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .map_err(|_| anyhow::anyhow!("Failed to install default crypto provider"))?;
+
     let args = Args::parse();
     let config = Conf::new(args.config_file).context("reading config file")?;
 
-    setup_tracing(&config.log_format, "gcs block uploader".to_string())?;
+    let node_name = "gcs_block_uploader".to_string();
+
+    setup_tracing(&config.log_format, node_name.clone())?;
+
+    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
 
     tracing::info!("Starting GCS block uploader");
 
-    let bus = SharedMessageBus::new(BusMetrics::global("gcs_block_uploader".to_string()));
+    let bus = SharedMessageBus::new();
 
     tracing::info!("Setting up modules");
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus).await;
+    let mut handler = ModulesHandler::new(
+        &bus,
+        config.data_directory.clone(),
+        ModulesHandlerOptions::default(),
+    )?;
+
+    let upload_start =
+        GcsUploader::get_last_uploaded_block(&config.gcs, &config.data_directory).await?;
 
     handler
-        .build_module::<SignedDAListener>(DAListenerConf {
+        .build_module::<SignedDAListener<BusOnlyProcessor>>(DAListenerConf {
             data_directory: config.data_directory.clone(),
             da_read_from: config.da_read_from.clone(),
-            start_block: Some(BlockHeight(0)),
+            start_block: Some(upload_start.start_height),
             timeout_client_secs: 10,
+            da_fallback_addresses: config.da_fallback_addresses.clone(),
+            processor_config: (),
         })
         .await?;
 
@@ -54,6 +74,9 @@ async fn main() -> Result<()> {
         .build_module::<GcsUploader>(GcsUploaderCtx {
             gcs_config: config.gcs.clone(),
             data_directory: config.data_directory.clone(),
+            node_name,
+            last_uploaded_height: upload_start.last_uploaded_height,
+            genesis_timestamp_folder: upload_start.genesis_timestamp_folder,
         })
         .await?;
 
@@ -77,6 +100,9 @@ pub struct Conf {
     /// URL to connect to.
     pub da_read_from: String,
 
+    /// DA fallback addresses to connect to if the main DA endpoint is unavailable.
+    pub da_fallback_addresses: Vec<String>,
+
     pub gcs: GCSConf,
 }
 
@@ -94,7 +120,10 @@ impl Conf {
             .add_source(
                 config::Environment::with_prefix("hyli")
                     .separator("__")
-                    .prefix_separator("_"),
+                    .prefix_separator("_")
+                    .list_separator(",")
+                    .with_list_parse_key("da_fallback_addresses")
+                    .try_parsing(true),
             )
             .build()?
             .try_deserialize()?;

@@ -62,6 +62,19 @@ pub trait ClientSdkProver<T: BorshSerialize + Send> {
     ) -> Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>>;
     fn info(&self) -> ProverInfo;
     fn program_id(&self) -> ProgramId;
+    fn new_from_registry(
+        _contract_name: &ContractName,
+        _program_id: ProgramId,
+    ) -> impl std::future::Future<Output = Result<Self>> + Send
+    where
+        Self: Sized,
+    {
+        async move {
+            Err(anyhow::anyhow!(
+                "new_from_registry not implemented for this prover"
+            ))
+        }
+    }
 
     // investigate dedundacy between info().zkvm
     fn verifier(&self) -> Verifier;
@@ -75,12 +88,12 @@ pub mod risc0 {
 
     use super::*;
 
-    pub struct Risc0Prover<'a> {
-        binary: &'a [u8],
+    pub struct Risc0Prover {
+        binary: Vec<u8>,
         program_id: [u8; 32],
     }
-    impl<'a> Risc0Prover<'a> {
-        pub fn new(binary: &'a [u8], program_id: [u8; 32]) -> Self {
+    impl Risc0Prover {
+        pub fn new(binary: Vec<u8>, program_id: [u8; 32]) -> Self {
             Self { binary, program_id }
         }
         pub async fn prove<T: BorshSerialize>(
@@ -93,7 +106,7 @@ pub mod risc0 {
                 "bonsai" => {
                     let input_data =
                         bonsai_runner::as_input_data(&(commitment_metadata, calldatas))?;
-                    let res = bonsai_runner::run_bonsai(self.binary, input_data.clone()).await?;
+                    let res = bonsai_runner::run_bonsai(&self.binary, input_data.clone()).await?;
                     (
                         res.receipt,
                         ProofMetadata {
@@ -106,7 +119,7 @@ pub mod risc0 {
                 "boundless" => {
                     let input_data =
                         bonsai_runner::as_input_data(&(commitment_metadata, calldatas))?;
-                    let res = bonsai_runner::run_boundless(self.binary, input_data).await?;
+                    let res = bonsai_runner::run_boundless(&self.binary, input_data).await?;
                     (
                         res.receipt,
                         ProofMetadata {
@@ -125,7 +138,7 @@ pub mod risc0 {
                         .unwrap();
 
                     let prover = risc0_zkvm::default_prover();
-                    let prove_info = prover.prove(env, self.binary)?;
+                    let prove_info = prover.prove(env, &self.binary)?;
                     (
                         prove_info.receipt,
                         ProofMetadata {
@@ -145,7 +158,7 @@ pub mod risc0 {
         }
     }
 
-    impl<T: BorshSerialize + Send + 'static> ClientSdkProver<T> for Risc0Prover<'_> {
+    impl<T: BorshSerialize + Send + 'static> ClientSdkProver<T> for Risc0Prover {
         fn prove(
             &self,
             commitment_metadata: Vec<u8>,
@@ -162,11 +175,79 @@ pub mod risc0 {
             }
         }
         fn verifier(&self) -> Verifier {
-            hyli_model::verifiers::RISC0_1.into()
+            hyli_model::verifiers::RISC0_3.into()
         }
 
         fn program_id(&self) -> ProgramId {
             ProgramId(self.program_id.into())
+        }
+
+        async fn new_from_registry(
+            contract_name: &ContractName,
+            program_id: ProgramId,
+        ) -> Result<Self>
+        where
+            Self: Sized,
+        {
+            let binding = hex::encode(program_id.0.clone());
+            let binary = hyli_registry::download_elf(&contract_name.0, &binding);
+            let binary = binary
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to get Risc0 ELF: {}", e))?;
+            Ok(Risc0Prover::new(binary, program_id.0.try_into().unwrap()))
+        }
+    }
+}
+
+#[cfg(feature = "jolt")]
+pub mod jolt {
+    pub use hyli_jolt_prover::{
+        verifier_preprocessing_to_program_id, BorshMemoryConfig, BorshableJoltProverPreprocessing,
+        JoltProver, JoltRegistryEntry,
+    };
+
+    use super::*;
+
+    impl ClientSdkProver<Vec<Calldata>> for JoltProver {
+        fn prove(
+            &self,
+            commitment_metadata: Vec<u8>,
+            calldatas: Vec<Calldata>,
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>> {
+            Box::pin(self.prove(commitment_metadata, calldatas))
+        }
+
+        fn info(&self) -> ProverInfo {
+            ProverInfo {
+                name: "jolt".to_string(),
+                zkvm: "jolt".to_string(),
+                version: "0.1".to_string(),
+            }
+        }
+
+        fn verifier(&self) -> Verifier {
+            hyli_model::verifiers::JOLT_0_1.into()
+        }
+
+        fn program_id(&self) -> ProgramId {
+            self.program_id.clone()
+        }
+
+        async fn new_from_registry(
+            contract_name: &ContractName,
+            program_id: ProgramId,
+        ) -> Result<Self>
+        where
+            Self: Sized,
+        {
+            let binding = hex::encode(program_id.0.clone());
+            let binary = hyli_registry::download_elf(&contract_name.0, &binding)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to get Jolt ELF: {}", e))?;
+
+            let entry = borsh::from_slice(&binary).expect("Failed to deserialize Jolt ELF");
+
+            Ok(JoltProver::new(entry, program_id))
         }
     }
 }
@@ -174,10 +255,9 @@ pub mod risc0 {
 #[cfg(feature = "sp1")]
 pub mod sp1 {
     use sdk::ProofMetadata;
-    use sp1_sdk::{
-        network::builder::NetworkProverBuilder, EnvProver, NetworkProver, ProverClient,
-        SP1ProvingKey, SP1Stdin,
-    };
+    #[cfg(feature = "sp1-network")]
+    use sp1_sdk::{network::builder::NetworkProverBuilder, NetworkProver};
+    use sp1_sdk::{EnvProver, ProverClient, SP1ProvingKey, SP1Stdin};
 
     use super::*;
 
@@ -188,37 +268,41 @@ pub mod sp1 {
 
     enum ProverType {
         Local(EnvProver),
+        #[cfg(feature = "sp1-network")]
         Network(Box<NetworkProver>),
     }
 
     impl SP1Prover {
         pub async fn new(pk: SP1ProvingKey) -> Self {
             let prover_type = std::env::var("SP1_PROVER").unwrap_or_default();
+            let wants_network = prover_type.eq_ignore_ascii_case("network");
 
-            match prover_type.to_lowercase().as_str() {
-                "network" => {
-                    // Setup the program for network proving
-                    let client = NetworkProverBuilder::default().build();
+            #[cfg(feature = "sp1-network")]
+            if wants_network {
+                // Setup the program for network proving
+                let client = NetworkProverBuilder::default().build();
 
-                    tracing::info!("Registering sp1 program on network");
-                    client
-                        .register_program(&pk.vk, &pk.elf)
-                        .await
-                        .expect("registering program");
+                tracing::info!("Registering sp1 program on network");
+                client
+                    .register_program(&pk.vk, &pk.elf)
+                    .await
+                    .expect("registering program");
 
-                    Self {
-                        pk,
-                        client: ProverType::Network(Box::new(client)),
-                    }
-                }
-                _ => {
-                    // Setup the program for local proving
-                    let client = ProverClient::from_env();
-                    Self {
-                        pk,
-                        client: ProverType::Local(client),
-                    }
-                }
+                return Self {
+                    pk,
+                    client: ProverType::Network(Box::new(client)),
+                };
+            }
+
+            if wants_network {
+                tracing::warn!("SP1_PROVER=network is set but `sp1-network` feature is disabled; falling back to local prover");
+            }
+
+            // Setup the program for local proving
+            let client = ProverClient::from_env();
+            Self {
+                pk,
+                client: ProverType::Local(client),
             }
         }
 
@@ -254,6 +338,7 @@ pub mod sp1 {
                         },
                     )
                 }
+                #[cfg(feature = "sp1-network")]
                 ProverType::Network(client) => {
                     let exec = client
                         .execute(&self.pk.elf, &stdin)
@@ -309,6 +394,22 @@ pub mod sp1 {
         fn program_id(&self) -> ProgramId {
             ProgramId(serde_json::to_vec(&self.pk.vk).expect("Failed to serialize SP1 Proving Key"))
         }
+
+        async fn new_from_registry(
+            contract_name: &ContractName,
+            program_id: ProgramId,
+        ) -> Result<Self>
+        where
+            Self: Sized,
+        {
+            let binding = hex::encode(program_id.0.clone());
+            let elf = hyli_registry::download_elf(&contract_name.0, &binding).await?;
+
+            let local_client = ProverClient::builder().cpu().build();
+            let (pk, _) = sp1_sdk::Prover::setup(&local_client, &elf);
+
+            Ok(SP1Prover::new(pk).await)
+        }
     }
 }
 
@@ -320,12 +421,21 @@ pub mod test {
 
     /// Generates valid proofs for the 'test' verifier using the TxExecutor
     pub struct TxExecutorTestProver<C: ZkContract> {
+        program_id: ProgramId,
         phantom: std::marker::PhantomData<C>,
     }
 
     impl<C: ZkContract> TxExecutorTestProver<C> {
         pub fn new() -> Self {
             Self {
+                program_id: ProgramId(vec![]),
+                phantom: std::marker::PhantomData,
+            }
+        }
+
+        pub fn new_with_program_id(program_id: ProgramId) -> Self {
+            Self {
+                program_id,
                 phantom: std::marker::PhantomData,
             }
         }
@@ -368,7 +478,17 @@ pub mod test {
         }
 
         fn program_id(&self) -> ProgramId {
-            ProgramId(vec![])
+            self.program_id.clone()
+        }
+
+        async fn new_from_registry(
+            _contract_name: &ContractName,
+            program_id: ProgramId,
+        ) -> Result<Self>
+        where
+            Self: Sized,
+        {
+            Ok(Self::new_with_program_id(program_id))
         }
 
         fn verifier(&self) -> Verifier {
@@ -385,7 +505,7 @@ pub mod test {
             calldata: Calldata,
         ) -> Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>> {
             Box::pin(async move {
-                let hyli_output = execute(commitment_metadata.clone(), calldata.clone())?;
+                let hyli_output = mock_execute(commitment_metadata.clone(), calldata.clone())?;
                 Ok(Proof {
                     data: ProofData(borsh::to_vec(&hyli_output).expect("Failed to encode proof")),
                     metadata: ProofMetadata {
@@ -422,7 +542,7 @@ pub mod test {
             Box::pin(async move {
                 let mut proofs = Vec::new();
                 for call in calldata {
-                    let hyli_output = test::execute(commitment_metadata.clone(), call)?;
+                    let hyli_output = mock_execute(commitment_metadata.clone(), call)?;
                     proofs.push(hyli_output);
                 }
                 Ok(Proof {
@@ -452,7 +572,7 @@ pub mod test {
         }
     }
 
-    pub fn execute(commitment_metadata: Vec<u8>, calldata: Calldata) -> Result<HyliOutput> {
+    fn mock_execute(commitment_metadata: Vec<u8>, calldata: Calldata) -> Result<HyliOutput> {
         // FIXME: this is a hack to make the test pass.
         let initial_state = StateCommitment(commitment_metadata);
         let hyli_output = HyliOutput {

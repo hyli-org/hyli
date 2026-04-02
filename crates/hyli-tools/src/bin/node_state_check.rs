@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::{Parser, command};
+use clap::Parser;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyli_model::DataEvent;
 use serde::{Deserialize, Serialize};
@@ -10,8 +10,11 @@ use hyli_contract_sdk::BlockHeight;
 use hyli_modules::module_handle_messages;
 use hyli_modules::modules::{Module, module_bus_client};
 use hyli_modules::{
-    bus::{SharedMessageBus, metrics::BusMetrics},
-    modules::{ModulesHandler, da_listener::DAListenerConf, signed_da_listener::SignedDAListener},
+    bus::SharedMessageBus,
+    modules::{
+        ModulesHandler, ModulesHandlerOptions, block_processor::BusOnlyProcessor,
+        da_listener::DAListenerConf, da_listener::SignedDAListener,
+    },
     node_state::NodeState,
     utils::logger::setup_tracing,
 };
@@ -32,19 +35,25 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting Node State Check with config: {:?}", config);
 
-    let bus = SharedMessageBus::new(BusMetrics::global("node_state_check".to_string()));
+    let bus = SharedMessageBus::new();
 
     tracing::info!("Setting up modules");
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus).await;
+    let mut handler = ModulesHandler::new(
+        &bus,
+        config.data_directory.clone(),
+        ModulesHandlerOptions::default(),
+    )?;
 
     handler
-        .build_module::<SignedDAListener>(DAListenerConf {
+        .build_module::<SignedDAListener<BusOnlyProcessor>>(DAListenerConf {
             data_directory: config.data_directory.clone(),
             da_read_from: config.da_read_from.clone(),
             start_block: Some(BlockHeight(0)),
             timeout_client_secs: 10,
+            da_fallback_addresses: vec![],
+            processor_config: (),
         })
         .await?;
 
@@ -153,14 +162,14 @@ impl Module for NodeStateCheck {
 
 impl NodeStateCheck {
     pub async fn start(&mut self) -> Result<()> {
-        let mut node_state = NodeState::create("node_state_check".to_string(), "node_state_check");
+        let mut node_state = NodeState::create("node_state_check");
         module_handle_messages! {
             on_self self,
             listen<DataEvent> event => {
                 let DataEvent::OrderedSignedBlock(block) = event;
                 let proc = node_state.handle_signed_block(block)?;
                 if let Some(max) = self.read_to
-                    && proc.parsed_block.block_height >= max {
+                    && proc.signed_block.height() >= max {
                         tracing::info!("Reached read_to block height: {}", max);
                         break;
                     }

@@ -18,7 +18,7 @@ async fn main() {
 
     // Create some test accounts
     for user in 0..1000 {
-        let account = Account::new(Identity::from(user.to_string()), 100);
+        let account = Account::new(Identity::from(format!("{user}")), 100);
         let key = account.get_key();
         smt.0.update(key, account).expect("Failed to update SMT");
     }
@@ -64,7 +64,7 @@ async fn main() {
         private_input: vec![],
     };
 
-    let prover = Risc0Prover::new(SMT_TOKEN_ELF, PROGRAM_ID);
+    let prover = Risc0Prover::new(SMT_TOKEN_ELF.to_vec(), PROGRAM_ID);
 
     let proof = prover.prove(commitment_metadata, vec![calldata]).await;
 

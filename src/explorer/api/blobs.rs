@@ -1,4 +1,4 @@
-use super::{ExplorerApiState, TxHashDb};
+use super::ExplorerApiState;
 use api::APIBlob;
 use axum::{
     extract::{Path, State},
@@ -11,19 +11,19 @@ use hyli_modules::log_error;
 
 #[derive(sqlx::FromRow, Debug)]
 pub struct BlobDb {
-    pub tx_hash: TxHashDb, // Corresponds to the transaction hash
+    pub tx_hash: TxHash, // Corresponds to the transaction hash
     #[sqlx(try_from = "i32")]
     pub blob_index: u32, // Index of the blob within the transaction
-    pub identity: String,  // Identity of the blob
+    pub identity: String, // Identity of the blob
     pub contract_name: String, // Contract name associated with the blob
-    pub data: Vec<u8>,     // Actual blob data
+    pub data: Vec<u8>,   // Actual blob data
     pub proof_outputs: Vec<serde_json::Value>, // outputs of proofs
 }
 
 impl From<BlobDb> for APIBlob {
     fn from(value: BlobDb) -> Self {
         APIBlob {
-            tx_hash: value.tx_hash.0,
+            tx_hash: value.tx_hash,
             blob_index: value.blob_index,
             identity: value.identity,
             contract_name: value.contract_name,
@@ -38,7 +38,7 @@ impl From<BlobDb> for APIBlob {
     get,
     tag = "Indexer",
     params(
-        ("tx_hash" = String, Path, description = "Tx hash"),
+        ("tx_hash" = TxHash, Path, description = "Tx hash"),
     ),
     path = "/blobs/hash/{tx_hash}",
     responses(
@@ -46,7 +46,7 @@ impl From<BlobDb> for APIBlob {
     )
 )]
 pub async fn get_blobs_by_tx_hash(
-    Path(tx_hash): Path<String>,
+    Path(tx_hash): Path<TxHash>,
     State(state): State<ExplorerApiState>,
 ) -> Result<Json<Vec<APIBlob>>, StatusCode> {
     let blobs = log_error!(
@@ -82,7 +82,7 @@ GROUP BY
       blobs.identity
 "#,
         )
-        .bind(tx_hash)
+        .bind(tx_hash.to_string())
         .fetch_all(&state.db)
         .await
         .map(|db| db.into_iter().map(Into::<APIBlob>::into).collect()),
@@ -97,7 +97,7 @@ GROUP BY
     get,
     tag = "Indexer",
     params(
-        ("tx_hash" = String, Path, description = "Tx hash"),
+        ("tx_hash" = TxHash, Path, description = "Tx hash"),
         ("blob_index" = String, Path, description = "Blob index"),
     ),
     path = "/blob/hash/{tx_hash}/index/{blob_index}",
@@ -106,7 +106,7 @@ GROUP BY
     )
 )]
 pub async fn get_blob(
-    Path((tx_hash, blob_index)): Path<(String, i32)>,
+    Path((tx_hash, blob_index)): Path<(TxHash, i32)>,
     State(state): State<ExplorerApiState>,
 ) -> Result<Json<APIBlob>, StatusCode> {
     let blob = log_error!(
@@ -135,7 +135,7 @@ ORDER BY transactions.block_height DESC, transactions.index DESC
 LIMIT 1;
 "#,
         )
-        .bind(tx_hash)
+        .bind(tx_hash.to_string())
         .bind(blob_index)
         .fetch_optional(&state.db)
         .await

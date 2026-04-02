@@ -193,16 +193,18 @@ impl Hashed<TxHash> for ProofTransaction {
         hasher.update(self.verifier.0.as_bytes());
         hasher.update(self.proof.hashed().0);
         let hash_bytes = hasher.finalize();
-        TxHash(hex::encode(hash_bytes))
+        TxHash(hash_bytes.to_vec())
     }
 }
 impl Hashed<TxHash> for VerifiedProofTransaction {
     fn hashed(&self) -> TxHash {
         let mut hasher = Sha3_256::new();
         hasher.update(self.contract_name.0.as_bytes());
-        hasher.update(self.proof_hash.0.as_bytes());
+        hasher.update(self.program_id.0.clone());
+        hasher.update(self.verifier.0.as_bytes());
+        hasher.update(&self.proof_hash.0);
         let hash_bytes = hasher.finalize();
-        TxHash(hex::encode(hash_bytes))
+        TxHash(hash_bytes.to_vec())
     }
 }
 
@@ -292,7 +294,7 @@ impl Hashed<TxHash> for BlobTransaction {
             hasher.update(blob.hashed().0);
         }
         let hash_bytes = hasher.finalize();
-        let tx_hash = TxHash(hex::encode(hash_bytes));
+        let tx_hash = TxHash(hash_bytes.to_vec());
         *self.hash_cache.write().unwrap() = Some(tx_hash.clone());
         tx_hash
     }
@@ -344,11 +346,9 @@ impl From<APIRegisterContract> for BlobTransaction {
             program_id: payload.program_id,
             state_commitment: payload.state_commitment,
             contract_name: payload.contract_name.clone(),
-            timeout_window: match payload.timeout_window {
-                Some(0) => Some(TimeoutWindow::NoTimeout),
-                Some(timeout) => Some(TimeoutWindow::Timeout(BlockHeight(timeout))),
-                None => None,
-            },
+            timeout_window: payload
+                .timeout_window
+                .map(|(a, b)| TimeoutWindow::timeout(BlockHeight(a), BlockHeight(b))),
             constructor_metadata: payload.constructor_metadata.clone(),
         }
         .as_blob("hyli".into())];
@@ -421,7 +421,7 @@ impl BlobsHashes {
 
 impl std::fmt::Display for BlobsHashes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (BlobIndex(index), BlobHash(hash)) in self.hashes.iter() {
+        for (BlobIndex(index), hash) in self.hashes.iter() {
             write!(f, "[{index}]: {hash}")?;
         }
         Ok(())

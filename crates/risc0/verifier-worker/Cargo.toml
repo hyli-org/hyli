@@ -1,0 +1,22 @@
+[package]
+name = "hyli-risc0-verifier-worker"
+description = "External Risc0 verifier worker for Hyli"
+license-file = { workspace = true }
+version = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+rust-version = { workspace = true }
+
+[[bin]]
+name = "hyli-risc0-verifier"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+borsh = { workspace = true }
+hyli-model = { workspace = true, features = ["full"] }
+hyli-verifier-worker-core = { path = "../../verifier-worker" }
+risc0-zkvm = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }

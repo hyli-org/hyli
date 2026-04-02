@@ -29,13 +29,16 @@ required-features = ["rate-proxy"]
 [dependencies]
 hyli-contract-sdk = { workspace = true }
 client-sdk = { workspace = true, features = ["rest"] }
-hyli-modules = { workspace = true }
+hyli-modules = { workspace = true, features = ["db", "gcs", "indexer"] }
+hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
 hyli-model = { workspace = true }
 smt-token = { workspace = true, features = ["client"] }
+hyli-registry = { workspace = true }
 
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["std"] }
 config = { workspace = true, features = ["toml"] }
+hex = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
@@ -43,12 +46,9 @@ tracing-subscriber = { workspace = true }
 sha2 = { workspace = true }
 borsh = { workspace = true }
 serde_json = { workspace = true }
+rustls = { workspace = true, features = ["aws-lc-rs"] }
 
 # needs to match workspace
-opentelemetry = { workspace = true }
-opentelemetry_sdk = { workspace = true }
-opentelemetry-prometheus = { workspace = true }
-prometheus = { workspace = true }
 
 # Feature UI
 ratatui = { workspace = true, features = ["crossterm"], optional = true }
@@ -69,6 +69,7 @@ hyper = { workspace = true, optional = true }
 hyper-util = { workspace = true, optional = true }
 dashmap = { workspace = true, optional = true }
 chrono = { workspace = true, features = ["clock"], optional = true }
+notify = { version = "8.2.0", optional = true }
 
 
 [features]
@@ -81,7 +82,12 @@ rate-proxy = [
   "dep:hyper-util",
   "dep:dashmap",
   "dep:chrono",
+  "dep:notify",
 ]
 
 default = ["ui", "rate-proxy"]
 ui = ["dep:ratatui", "dep:crossterm"]
+turmoil = []
+
+[package.metadata.cargo-machete]
+ignored = ["hyli-turmoil-shims"]

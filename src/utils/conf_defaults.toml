@@ -4,12 +4,15 @@ id = "node"
 log_format = "full"
 # Directory name to store node state.
 data_directory = "data_node"
+# If true, back up non-empty data directory when manifest is missing/empty.
+# If false, delete that invalid directory and recreate it empty.
+backup_on_invalid_manifest = false
 
-# Fast Cachup mode
+# Fast Catchup mode
 run_fast_catchup = false
-fast_catchup_override = true
 fast_catchup_backfill = false
-fast_catchup_from = "127.0.0.1:43222"
+fast_catchup_peers = ["127.0.0.1:43222"]
+fast_catchup_timeout_secs = 30
 
 # Data availability module, which streams historical & new blocks.
 # Public IP
@@ -36,9 +39,11 @@ tcp_server_port = 1414
 # Indexer
 run_indexer = true
 run_explorer = true
-database_url = "postgres://postgres:postgres@localhost:5432/postgres"
+database_url = "postgres://postgres:postgres@localhost:5432/{db}"
 da_read_from = "127.0.0.1:4141"
 da_timeout_client_secs = 10
+# Fallback DA server addresses for block requests (comma-separated)
+da_fallback_addresses = []
 
 [p2p]
 # "FullValidator" runs a full node, "LaneManager" skips consensus, or "None" to disable most modules.
@@ -54,6 +59,16 @@ peers = []
 # Interval the p2p layer does a ping to check aliveness of other peers.
 ping_interval = 10
 
+[p2p.timeouts]
+# Wait before retrying a socket marked as poisoned after failures (ms)
+poisoned_retry_interval_ms = 10_000
+# Max duration for a TCP client handshake connection attempt (ms)
+tcp_client_handshake_timeout_ms = 10_000
+# Timeout when sending TCP frames (ms)
+tcp_send_timeout_ms = 10_000
+# Minimum delay before retrying a connect/handshake to the same peer (ms)
+connect_retry_cooldown_ms = 3_000
+
 
 [consensus]
 # Time to wait before producing a new block when no new transactions are received.
@@ -65,7 +80,13 @@ timestamp_checks = "Monotonic"
 # Whether to run the single-node or full consensus
 solo = true
 # Timestamp of the genesis block in seconds since epoch.
-genesis_timestamp = 1735689600 # Default to 2025-01-01T00:00:00Z
+genesis_timestamp = 0
+# Number of recent timeout certificates to keep for timeout recovery.
+timeout_certificate_cache_size = 100
+# Max number of prepares kept in memory for sync replies.
+buffered_prepares_max_in_memory = 100
+# Max number of prepares serialized to disk for sync replies.
+buffered_prepares_max_serialized = 20
 
 [genesis]
 # Stakers and their inigial stake.
@@ -88,12 +109,50 @@ events = ["node_state", "new_block", "new_tx"]
 [indexer]
 query_buffer_size = 10000
 persist_proofs = true
+index_tx_events = true
 
-[gcs]
-# GCS bucket info
-gcs_bucket = "testnet_proofs"
-gcs_prefix = "local"
+[own_lanes]
+suffixes = ["default"]
+default_blob_suffix = "default"
+default_proof_suffix = "default"
 
-# GCS uploader options
-save_proofs = false
-save_blocks = false
+[verifier_workers]
+enabled = true
+default_request_timeout_ms = 30000
+default_restart_backoff_ms = 1000
+
+[verifier_workers.backends.jolt]
+enabled = false
+command = "hyli-jolt-verifier"
+args = []
+verifiers = ["jolt-0.1"]
+startup_timeout_ms = 5000
+request_timeout_ms = 30000
+auto_restart = true
+
+[verifier_workers.backends.sp1]
+enabled = false
+command = "hyli-sp1-verifier"
+args = []
+verifiers = ["sp1-4"]
+startup_timeout_ms = 5000
+request_timeout_ms = 30000
+auto_restart = true
+
+[verifier_workers.backends.risc0]
+enabled = false
+command = "hyli-risc0-verifier"
+args = []
+verifiers = ["risc0-3"]
+startup_timeout_ms = 5000
+request_timeout_ms = 30000
+auto_restart = true
+
+[verifier_workers.backends.reth]
+enabled = false
+command = "hyli-reth-verifier"
+args = []
+verifiers = ["reth"]
+startup_timeout_ms = 5000
+request_timeout_ms = 30000
+auto_restart = true
