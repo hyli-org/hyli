@@ -15,6 +15,7 @@ COPY crates ./crates
 RUN cargo build --release -F risc0 -F rate-proxy;
 RUN cargo build --release -p hyli-jolt-verifier-worker
 RUN cargo build --release -p hyli-sp1-verifier-worker
+RUN cargo build --release -p hyli-reth-verifier-worker
 
 # RUNNER
 FROM ${BASE_IMAGE} AS runner

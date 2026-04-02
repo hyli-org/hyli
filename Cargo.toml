@@ -25,6 +25,7 @@ members = [
   "crates/jolt/verifier-worker",
   "crates/sp1/verifier-worker",
   "crates/risc0/verifier-worker",
+  "crates/reth/verifier-worker",
   "crates/hyli-bus",
   "crates/hyli-modules",
   "crates/hyli-test-containers",
@@ -79,6 +80,7 @@ hyli-modules = { version = "0.15.0", default-features = false, path = "crates/hy
 hyli-test-containers = { version = "0.15.0", path = "crates/hyli-test-containers", package = "hyli-test-containers" }
 hyli-jolt-model = { version = "0.15.0", path = "crates/jolt/model", package = "hyli-jolt-model" }
 hyli-jolt-prover = { version = "0.15.0", path = "crates/jolt/prover", package = "hyli-jolt-prover" }
+hyli-reth-verifier-worker = { version = "0.15.0", path = "crates/reth/verifier-worker", package = "hyli-reth-verifier-worker" }
 
 hyli-registry = { version = "0.5.0" }
 
@@ -358,7 +360,6 @@ turmoil = [
 ]
 
 cairo-m = ["hyli-verifiers/cairo-m"]
-reth = ["hyli-verifiers/reth"]
 
 # Disable dependency keyring by default, as it requires libdbus
 keyring = ["hyli-crypto/keyring"]

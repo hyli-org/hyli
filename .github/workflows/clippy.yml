@@ -28,7 +28,7 @@ jobs:
         with:
           deny: warnings
           token: ${{ secrets.GITHUB_TOKEN }}
-          options: "--workspace --all-targets -F sp1 -F risc0 -F reth"
+          options: "--workspace --all-targets -F sp1 -F risc0"
       - name: Run cargo check
         run: cargo check --workspace
 
