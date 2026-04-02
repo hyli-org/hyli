@@ -27,7 +27,6 @@ stwo-prover = { git = "https://github.com/starkware-libs/stwo", features = [
   "parallel",
 ], rev = "ab57a1c", optional = true }
 
-risc0-zkvm = { workspace = true, features = ["std"], optional = true }
 bincode = { workspace = true, optional = true }
 reth-stateless = { workspace = true, optional = true, features = ["k256"] }
 reth-ethereum = { workspace = true, optional = true, features = ["evm"] }
@@ -45,7 +44,6 @@ test-log = { workspace = true, features = ["color", "trace"] }
 
 [features]
 default = []
-risc0 = ["dep:risc0-zkvm"]
 cairo-m =["dep:cairo-m-prover", "dep:stwo-prover", "dep:sonic-rs", "dep:serde"]
 reth = [
   "dep:reth-stateless",

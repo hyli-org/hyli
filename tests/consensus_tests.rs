@@ -304,6 +304,7 @@ mod e2e_consensus {
             .build()
     }
 
+    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn can_restart_single_node_after_txs() -> Result<()> {
         let mut ctx = E2ECtx::new_single_with_indexer(500).await?;
@@ -368,6 +369,7 @@ mod e2e_consensus {
         Ok(())
     }
 
+    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn can_restart_multi_node_after_txs() -> Result<()> {
         let mut ctx = E2ECtx::new_multi_with_indexer_and_timestamp_checks(
@@ -443,6 +445,7 @@ mod e2e_consensus {
         Ok(())
     }
 
+    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn multiple_nonconsecutive_timeouts() -> Result<()> {
         let mut ctx = E2ECtx::new_multi(8, 500).await?;

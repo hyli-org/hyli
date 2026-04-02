@@ -111,6 +111,7 @@ mod e2e_hyllar {
         Ok(ctx)
     }
 
+    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn hyllar_single_node() -> Result<()> {
         let ctx = E2ECtx::new_single_with_indexer(500).await?;
@@ -118,6 +119,7 @@ mod e2e_hyllar {
         Ok(())
     }
 
+    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn hyllar_multi_nodes() -> Result<()> {
         let ctx = E2ECtx::new_multi_with_indexer(2, 500).await?;

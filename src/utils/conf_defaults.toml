@@ -138,3 +138,12 @@ verifiers = ["sp1-4"]
 startup_timeout_ms = 5000
 request_timeout_ms = 30000
 auto_restart = true
+
+[verifier_workers.backends.risc0]
+enabled = false
+command = "hyli-risc0-verifier"
+args = []
+verifiers = ["risc0-3"]
+startup_timeout_ms = 5000
+request_timeout_ms = 30000
+auto_restart = true

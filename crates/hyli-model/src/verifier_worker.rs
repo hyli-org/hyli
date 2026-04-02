@@ -6,6 +6,7 @@ pub struct VerifyRequest {
     pub verifier: String,
     pub proof: Vec<u8>,
     pub program_id: Vec<u8>,
+    pub recursive: bool,
 }
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]

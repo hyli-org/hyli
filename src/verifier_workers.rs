@@ -83,6 +83,19 @@ impl ProofVerifierService {
             .with_context(|| format!("no verifier worker configured for {}", verifier))?;
         worker.verify(verifier, proof, program_id).await
     }
+
+    pub async fn verify_recursive(
+        &self,
+        verifier: &Verifier,
+        proof: &ProofData,
+        program_id: &ProgramId,
+    ) -> Result<(Vec<ProgramId>, Vec<HyliOutput>)> {
+        let worker = self
+            .routes
+            .get(&verifier.0)
+            .with_context(|| format!("no verifier worker configured for {}", verifier))?;
+        worker.verify_recursive(verifier, proof, program_id).await
+    }
 }
 
 struct ProcessVerifierWorker {
@@ -144,7 +157,31 @@ impl ProcessVerifierWorker {
             verifier: verifier.0.clone(),
             proof: proof.0.clone(),
             program_id: program_id.0.clone(),
+            recursive: false,
         };
+        let response = self.send_verify_request(request).await?;
+        from_slice::<Vec<HyliOutput>>(&response.outputs)
+            .context("deserializing verifier worker outputs")
+    }
+
+    async fn verify_recursive(
+        &self,
+        verifier: &Verifier,
+        proof: &ProofData,
+        program_id: &ProgramId,
+    ) -> Result<(Vec<ProgramId>, Vec<HyliOutput>)> {
+        let request = VerifyRequest {
+            verifier: verifier.0.clone(),
+            proof: proof.0.clone(),
+            program_id: program_id.0.clone(),
+            recursive: true,
+        };
+        let response = self.send_verify_request(request).await?;
+        from_slice::<(Vec<ProgramId>, Vec<HyliOutput>)>(&response.outputs)
+            .context("deserializing verifier worker recursive outputs")
+    }
+
+    async fn send_verify_request(&self, request: VerifyRequest) -> Result<VerifyResponse> {
         let request_bytes = to_vec(&request).context("serializing verifier worker request")?;
 
         let mut guard = self.state.lock().await;
@@ -191,8 +228,7 @@ impl ProcessVerifierWorker {
             );
         }
 
-        from_slice::<Vec<HyliOutput>>(&response.outputs)
-            .context("deserializing verifier worker outputs")
+        Ok(response)
     }
 
     async fn send_request(process: &mut WorkerProcess, request: &[u8]) -> Result<VerifyResponse> {
