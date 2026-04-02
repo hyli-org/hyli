@@ -4,10 +4,7 @@ use hyli_model::{
     ProofData, ProofTransaction, RegisterContractAction, RegisterContractEffect, StateCommitment,
 };
 use hyli_modules::node_state::test::make_hyli_output_with_state;
-use testcontainers_modules::{
-    postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
-};
+use hyli_test_containers::{postgres::Postgres, runners::AsyncRunner, ContainerAsync, ImageExt};
 use tracing::info;
 
 use crate::{

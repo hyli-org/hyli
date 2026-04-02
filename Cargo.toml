@@ -27,6 +27,7 @@ members = [
   "crates/risc0/verifier-worker",
   "crates/hyli-bus",
   "crates/hyli-modules",
+  "crates/hyli-test-containers",
   "crates/hyli-tools",
   "crates/noir-tools",
   "crates/hylix",
@@ -75,6 +76,7 @@ amm = { version = "0.15.0", default-features = false, path = "crates/contracts/a
 uuid-tld = { version = "0.15.0", default-features = false, path = "crates/contracts/uuid-tld", package = "hyli-uuid-tld" }
 hyli-contracts = { version = "0.15.0", default-features = false, path = "crates/contracts", package = "hyli-contracts" }
 hyli-modules = { version = "0.15.0", default-features = false, path = "crates/hyli-modules", package = "hyli-modules" }
+hyli-test-containers = { version = "0.15.0", path = "crates/hyli-test-containers", package = "hyli-test-containers" }
 hyli-jolt-model = { version = "0.15.0", path = "crates/jolt/model", package = "hyli-jolt-model" }
 hyli-jolt-prover = { version = "0.15.0", path = "crates/jolt/prover", package = "hyli-jolt-prover" }
 
@@ -165,7 +167,6 @@ strum_macros = { version = "0.28.0", default-features = false }
 syn = { version = "2.0.104" }
 tempfile = { version = "3.20.0", default-features = false }
 test-log = { version = "0.2.18", default-features = false }
-testcontainers-modules = { version = "0.15.0", default-features = false }
 tracing-opentelemetry = "0.29.0"
 tokio = { version = "1.50.0" }
 tokio-util = { version = "0.7.16" }
@@ -279,7 +280,7 @@ dhat = { workspace = true, optional = true }
 alloc-metrics = { workspace = true, optional = true }
 utoipa = { workspace = true, features = ["axum_extras"] }
 utoipa-axum = { workspace = true }
-testcontainers-modules = { workspace = true, features = ["postgres"] }
+hyli-test-containers = { workspace = true }
 toml = { workspace = true, features = ["display"] }
 alloc-track = { git = "https://github.com/hyli-org/alloc-track", optional = true }
 

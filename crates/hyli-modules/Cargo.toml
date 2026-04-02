@@ -65,7 +65,7 @@ sha2 = { workspace = true }
 secp256k1 = { workspace = true, features = ["rand", "global-context"] }
 test-log = { workspace = true, features = ["color", "trace"] }
 hydentity = { workspace = true, features = ["client"] }
-testcontainers-modules = { workspace = true, features = ["postgres"] }
+hyli-test-containers = { workspace = true }
 sqlx = { workspace = true, features = ["runtime-tokio", "chrono"] }
 hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
 
