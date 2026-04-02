@@ -315,6 +315,7 @@ allocative = { git = "https://github.com/facebookexperimental/allocative", rev =
 zkhash = { git = "https://github.com/AntoineFONDEUR/poseidon2", branch = "poseidon2-M31", optional = true }
 
 [dev-dependencies]
+hyli-net = { workspace = true, features = ["test-utils"] }
 amm = { workspace = true, features = ["client"] }
 uuid-tld = { workspace = true, features = ["client"] }
 smt-token = { workspace = true, features = ["client", "risc0"] }

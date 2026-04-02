@@ -5765,6 +5765,7 @@ dependencies = [
  "hyli-turmoil-shims",
  "hyper 1.8.1",
  "hyper-util",
+ "libc",
  "opentelemetry",
  "opentelemetry_sdk",
  "paste",

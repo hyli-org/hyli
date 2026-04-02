@@ -36,13 +36,8 @@ use hyli_modules::{
 };
 use tracing::info;
 
-// Assume that we can reuse the OS-provided port.
 pub async fn find_available_port() -> u16 {
-    let listener = hyli_net::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
-    let addr = listener.local_addr().unwrap();
-    addr.port()
+    hyli_net::test_utils::find_available_port_sync()
 }
 
 type MockBuilder = Box<
