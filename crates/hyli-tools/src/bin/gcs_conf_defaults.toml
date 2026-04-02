@@ -14,6 +14,7 @@ gcs_bucket = "hyli-dev-gcs-uploader"
 gcs_prefix = "local"
 
 # GCS uploader options
+save_data_proposals = false
 save_proofs = true
 save_blocks = true
 

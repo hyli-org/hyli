@@ -1,8 +1,12 @@
 use std::{
     collections::{BTreeMap, HashMap},
     path::PathBuf,
+    sync::Arc,
 };
 
+use crate::shared_storage::{
+    durability_backend_for_conf, gcs::timestamp_to_folder_name, DataProposalDurability,
+};
 use crate::{model::*, p2p::network::PeerEvent, utils::conf::SharedConf};
 use anyhow::{Error, Result};
 use client_sdk::{
@@ -57,6 +61,7 @@ pub struct Genesis {
     bus: GenesisBusClient,
     peer_pubkey: PeerPublicKeyMap,
     crypto: SharedBlstCrypto,
+    durability: Arc<DataProposalDurability>,
     already_handled_genesis: bool,
     peer_timestamps: Vec<TimestampMs>,
     start_timestamp: TimestampMs,
@@ -75,11 +80,21 @@ impl Module for Genesis {
                 }
             };
         let bus = GenesisBusClient::new_from_bus(bus.new_handle()).await;
+        let durability_backend = durability_backend_for_conf(
+            &ctx.config.data_directory,
+            &ctx.config.data_proposal_durability,
+            false,
+        )
+        .await?;
         Ok(Genesis {
             config: ctx.config.clone(),
             bus,
             peer_pubkey: BTreeMap::new(),
             crypto: ctx.crypto.clone(),
+            durability: Arc::new(DataProposalDurability::new(
+                durability_backend,
+                &ctx.config.data_directory,
+            )?),
             already_handled_genesis,
             peer_timestamps: Vec::new(),
             start_timestamp: ctx.start_timestamp,
@@ -214,8 +229,54 @@ impl Genesis {
         let signed_block =
             self.make_genesis_block(genesis_txs, initial_validators, genesis_timestamp);
 
+        self.persist_genesis_data_proposals(&signed_block).await?;
+
         // At this point, we can setup the genesis block.
         _ = self.bus.send(GenesisEvent::GenesisBlock(signed_block));
+
+        Ok(())
+    }
+
+    async fn persist_genesis_data_proposals(&self, signed_block: &SignedBlock) -> Result<()> {
+        if !self.config.data_proposal_durability.enabled() {
+            return Ok(());
+        }
+
+        let current_chain_timestamp =
+            timestamp_to_folder_name(signed_block.consensus_proposal.timestamp.0)?;
+        self.durability
+            .set_current_chain_timestamp(current_chain_timestamp.clone());
+
+        let total_dps: usize = signed_block
+            .data_proposals
+            .iter()
+            .map(|(_, data_proposals)| data_proposals.len())
+            .sum();
+        info!(
+            "🌱 Persisting {total_dps} genesis data proposals for chain timestamp {current_chain_timestamp}"
+        );
+
+        for (lane_id, data_proposals) in &signed_block.data_proposals {
+            info!(
+                "🌱 Persisting {} genesis data proposals on lane {}",
+                data_proposals.len(),
+                lane_id
+            );
+            for data_proposal in data_proposals {
+                let mut canonical = data_proposal.clone();
+                canonical.remove_proofs();
+                let dp_hash = canonical.hashed();
+                self.durability
+                    .prime_persistence(lane_id.clone(), data_proposal)?;
+                self.durability
+                    .wait_until_persisted(lane_id, &dp_hash)
+                    .await?;
+                debug!(
+                    "🌱 Persisted genesis data proposal {} on lane {}",
+                    dp_hash, lane_id
+                );
+            }
+        }
 
         Ok(())
     }
@@ -745,6 +806,7 @@ mod tests {
 
     use super::*;
     use crate::bus::{BusClientReceiver, SharedMessageBus};
+    use crate::shared_storage::{DataProposalDurability, NullDurabilityBackend};
     use crate::utils::conf::Conf;
     use hyli_crypto::BlstCrypto;
     use std::sync::Arc;
@@ -767,6 +829,9 @@ mod tests {
                 bus,
                 peer_pubkey: BTreeMap::new(),
                 crypto,
+                durability: Arc::new(DataProposalDurability::new_in_memory(Arc::new(
+                    NullDurabilityBackend,
+                ))),
                 already_handled_genesis: false,
                 peer_timestamps: Vec::new(),
                 start_timestamp: TimestampMs(1000000),

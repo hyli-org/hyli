@@ -3,7 +3,11 @@ use hyli_modules::{log_error, module_handle_messages};
 use std::{sync::Arc, time::Duration};
 
 use crate::{
-    consensus::ConsensusEvent, model::*, p2p::network::MsgWithHeader, utils::conf::P2pMode,
+    consensus::ConsensusEvent,
+    model::*,
+    p2p::network::MsgWithHeader,
+    shared_storage::{durability_backend_for_conf, gcs::timestamp_to_folder_name},
+    utils::conf::P2pMode,
 };
 
 use client_sdk::tcp_client::TcpServerMessage;
@@ -16,7 +20,7 @@ use crate::model::SharedRunContext;
 
 use super::{
     api, mempool_bus_client::MempoolBusClient, metrics::MempoolMetrics, shared_lanes_storage,
-    storage::Storage, Mempool, MempoolStore,
+    Mempool, MempoolStore,
 };
 
 use anyhow::Result;
@@ -47,6 +51,16 @@ impl Module for Mempool {
 
         let mut lanes = shared_lanes_storage(&ctx.config.data_directory)?;
         lanes.set_metrics_context(ctx.config.id.clone());
+        let durability_backend = durability_backend_for_conf(
+            &ctx.config.data_directory,
+            &ctx.config.data_proposal_durability,
+            ctx.config.run_fast_catchup,
+        )
+        .await?;
+        let durability = crate::shared_storage::DataProposalDurability::new(
+            durability_backend,
+            &ctx.config.data_directory,
+        )?;
 
         let mut mempool = Mempool {
             bus,
@@ -55,6 +69,7 @@ impl Module for Mempool {
             crypto: Arc::clone(&ctx.crypto),
             metrics,
             lanes,
+            durability,
             proof_verifiers: Arc::clone(&ctx.proof_verifiers),
             inner,
         };
@@ -88,6 +103,13 @@ impl Module for Mempool {
             }
             listen<NodeStateEvent> cmd => {
                 let NodeStateEvent::NewBlock(block) = cmd;
+                if block.signed_block.height() == BlockHeight(0) {
+                    let current_chain_timestamp =
+                        timestamp_to_folder_name(block.signed_block.consensus_proposal.timestamp.0)?;
+                    self.durability
+                        .set_current_chain_timestamp(current_chain_timestamp);
+                    self.flush_pending_chain_timestamp_entries().await?;
+                }
                 // In this p2p mode we don't receive consensus events so we must update manually.
                 if self.conf.p2p.mode == P2pMode::LaneManager {
                     if let Err(e) = self.staking.process_block(&block.staking_data) {
@@ -148,6 +170,7 @@ impl Module for Mempool {
     async fn persist(&mut self) -> Result<ModulePersistOutput> {
         if let Some(file) = &self.file {
             self.lanes.persist()?;
+            self.durability.persist()?;
 
             let mempool_file = "mempool.bin";
             let checksum = Self::save_on_disk(file, mempool_file.as_ref(), &self.inner)?;

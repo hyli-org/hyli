@@ -42,6 +42,7 @@ pub struct GCSConf {
     pub gcs_bucket: String,
     pub gcs_prefix: String,
 
+    pub save_data_proposals: bool,
     pub save_proofs: bool,
     pub save_blocks: bool,
 

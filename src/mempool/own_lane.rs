@@ -8,11 +8,11 @@ use client_sdk::tcp_client::TcpServerMessage;
 use hyli_turmoil_shims::collections::HashMap;
 use tracing::{debug, info, trace};
 
+use super::api::RestApiMessage;
 use super::verifiers::{verify_proof, verify_recursive_proof};
 use super::DisseminationEvent;
 #[cfg(test)]
 use super::MempoolNetMessage;
-use super::{api::RestApiMessage, storage::Storage};
 use indexmap::IndexMap;
 use std::{collections::HashSet, sync::Arc};
 use tokio::task::Id as TaskId;
@@ -174,6 +174,12 @@ impl super::Mempool {
     pub(super) fn prepare_new_data_proposal(&mut self) -> Result<bool> {
         if !self.ready_to_create_dps {
             trace!("Skipping own-lane DP creation until first CCP is received");
+            return Ok(false);
+        }
+        if self.requires_current_chain_timestamp_for_dp_durability()
+            && !self.durability.has_current_chain_timestamp()
+        {
+            trace!("Skipping own-lane DP creation until current_chain_timestamp is available");
             return Ok(false);
         }
         trace!("🐣 Prepare new owned data proposal");
@@ -361,6 +367,9 @@ impl super::Mempool {
         self.metrics.created_data_proposals.add(1, &[]);
         self.metrics
             .record_created_data_proposal_bytes(&lane_id, data_proposal.estimate_size() as u64);
+
+        self.durability
+            .prime_persistence(lane_id.clone(), &data_proposal)?;
 
         let (data_proposal_hash, cumul_size) =
             self.lanes

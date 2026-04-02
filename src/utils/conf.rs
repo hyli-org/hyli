@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use config::{Config, Environment, File};
+use hyli_modules::modules::gcs_uploader::GCSConf;
 use hyli_modules::modules::websocket::WebSocketConfig;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
@@ -198,6 +199,37 @@ impl Default for OwnLaneConf {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct DataProposalDurabilityConf {
+    pub gcs_bucket: String,
+    pub gcs_prefix: String,
+    pub save_data_proposals: bool,
+}
+
+impl DataProposalDurabilityConf {
+    pub fn gcs_enabled(&self) -> bool {
+        self.save_data_proposals && !self.gcs_bucket.trim().is_empty()
+    }
+
+    pub fn file_enabled(&self) -> bool {
+        self.save_data_proposals && self.gcs_bucket.trim().is_empty()
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.gcs_enabled() || self.file_enabled()
+    }
+}
+
+impl From<GCSConf> for DataProposalDurabilityConf {
+    fn from(value: GCSConf) -> Self {
+        Self {
+            gcs_bucket: value.gcs_bucket,
+            gcs_prefix: value.gcs_prefix,
+            save_data_proposals: value.save_data_proposals,
+        }
+    }
+}
+
 impl From<NodeWebSocketConfig> for WebSocketConfig {
     fn from(config: NodeWebSocketConfig) -> Self {
         Self {
@@ -279,6 +311,8 @@ pub struct Conf {
     pub da_timeout_client_secs: u64,
     /// Fallback DA server addresses for block requests when blocks are missing
     pub da_fallback_addresses: Vec<String>,
+    /// Pub/Sub subscription used by standalone indexers to receive GCS stored-block notifications.
+    pub gcs_stored_block_subscription: String,
 
     /// Websocket configuration
     pub websocket: NodeWebSocketConfig,
@@ -288,6 +322,10 @@ pub struct Conf {
 
     /// Own-lane configuration
     pub own_lanes: OwnLaneConf,
+
+    /// Durable canonical data proposal storage configuration.
+    #[serde(alias = "gcs")]
+    pub data_proposal_durability: DataProposalDurabilityConf,
 
     /// External verifier worker configuration
     pub verifier_workers: VerifierWorkersConf,

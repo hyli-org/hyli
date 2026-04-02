@@ -87,6 +87,11 @@ fn main() {
     }
 }
 async fn inner_main() -> Result<()> {
+    // Required for rustls 0.23.x consumers on this binary path, including GCS auth.
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .map_err(|_| anyhow::anyhow!("Failed to install default crypto provider"))?;
+
     #[cfg(feature = "dhat")]
     let _profiler = {
         info!("Running with dhat memory profiler");

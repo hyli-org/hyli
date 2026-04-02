@@ -34,7 +34,7 @@ sqlx = { workspace = true, optional = true, features = ["chrono"] }
 
 # GCS
 google-cloud-storage = { workspace = true, optional = true }
-chrono = { workspace = true, optional = true }
+chrono = { workspace = true }
 
 tokio = { workspace = true, features = ["full", "tracing"] }
 tokio-util = { workspace = true }
@@ -82,4 +82,4 @@ instrumentation = [
 ]
 indexer = ["client-sdk/csi", "db"]
 db = ["dep:sqlx", "hyli-model/sqlx", "sqlx/runtime-tokio", "sqlx/postgres"]
-gcs = ["dep:google-cloud-storage", "dep:chrono"]
+gcs = ["dep:google-cloud-storage"]

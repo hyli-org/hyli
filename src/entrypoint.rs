@@ -7,6 +7,10 @@ use crate::{
     explorer::Explorer,
     genesis::Genesis,
     indexer::Indexer,
+    indexer_da_client::{
+        GcsEventIndexerClient, GcsEventIndexerClientCtx, StoredDaIndexerClient,
+        StoredDaIndexerClientCtx,
+    },
     mempool::{dissemination::DisseminationManager, Mempool},
     model::{api::NodeInfo, ContractName, SharedRunContext},
     p2p::P2P,
@@ -40,7 +44,7 @@ use hyli_modules::{
         BuildApiContextInner, Module,
     },
     node_state::{
-        module::{NodeStateCtx, NodeStateModule},
+        module::{persist_current_chain_timestamp, NodeStateCtx, NodeStateModule},
         NodeStateStore,
     },
     utils::db::use_fresh_db,
@@ -452,14 +456,21 @@ pub async fn common_main(
                     "Saving node state store"
                 )?;
 
+                let mut persisted = vec![
+                    (consensus_path, consensus_checksum),
+                    (node_state_path, node_state_checksum),
+                ];
+                if let Some(timestamp_file) =
+                    persist_current_chain_timestamp(&config.data_directory, &node_state_store)
+                        .context(
+                            "Persisting current chain timestamp from fast catchup node state",
+                        )?
+                {
+                    persisted.push(timestamp_file);
+                }
+
                 log_error!(
-                    write_manifest(
-                        &config.data_directory,
-                        &[
-                            (consensus_path, consensus_checksum),
-                            (node_state_path, node_state_checksum),
-                        ],
-                    ),
+                    write_manifest(&config.data_directory, &persisted),
                     "Writing checksum manifest for fast catchup stores"
                 )?;
             } else {
@@ -614,18 +625,44 @@ pub async fn common_main(
 
         handler.build_module::<P2P>(ctx.clone()).await?;
     } else if config.run_indexer {
-        LocalDaReplayer::build_bus_only_source(
-            &mut handler,
-            DAListenerConf {
-                data_directory: config.data_directory.clone(),
-                da_read_from: config.da_read_from.clone(),
-                start_block: None,
-                timeout_client_secs: config.da_timeout_client_secs,
-                da_fallback_addresses: config.da_fallback_addresses.clone(),
-                processor_config: (),
-            },
-        )
-        .await?;
+        if !config.gcs_stored_block_subscription.is_empty()
+            && config.data_proposal_durability.gcs_enabled()
+        {
+            handler
+                .build_module::<GcsEventIndexerClient>(GcsEventIndexerClientCtx {
+                    data_directory: config.data_directory.clone(),
+                    timeout_client_secs: config.da_timeout_client_secs,
+                    gcs_conf: config.data_proposal_durability.clone(),
+                    subscription: config.gcs_stored_block_subscription.clone(),
+                })
+                .await?;
+        } else if config.data_proposal_durability.gcs_enabled()
+            && !config.da_read_from.starts_with("folder:")
+            && !config.da_read_from.starts_with("blob:")
+        {
+            handler
+                .build_module::<StoredDaIndexerClient>(StoredDaIndexerClientCtx {
+                    data_directory: config.data_directory.clone(),
+                    da_read_from: config.da_read_from.clone(),
+                    da_fallback_addresses: config.da_fallback_addresses.clone(),
+                    timeout_client_secs: config.da_timeout_client_secs,
+                    gcs_conf: config.data_proposal_durability.clone(),
+                })
+                .await?;
+        } else {
+            LocalDaReplayer::build_bus_only_source(
+                &mut handler,
+                DAListenerConf {
+                    data_directory: config.data_directory.clone(),
+                    da_read_from: config.da_read_from.clone(),
+                    start_block: None,
+                    timeout_client_secs: config.da_timeout_client_secs,
+                    da_fallback_addresses: config.da_fallback_addresses.clone(),
+                    processor_config: (),
+                },
+            )
+            .await?;
+        }
     }
 
     if config.websocket.enabled {

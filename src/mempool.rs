@@ -8,6 +8,7 @@ use crate::{
     p2p::network::{
         HeaderSignableData, HeaderSigner, IntoHeaderSignableData, MsgWithHeader, OutboundMessage,
     },
+    shared_storage::DataProposalDurability,
     utils::{conf::SharedConf, serialize::BorshableIndexMap},
     verifier_workers::ProofVerifierService,
 };
@@ -16,6 +17,7 @@ use api::RestApiMessage;
 use block_construction::BlockUnderConstruction;
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::tcp_client::TcpServerMessage;
+use hyli_crypto::BlstCrypto;
 use hyli_crypto::SharedBlstCrypto;
 use hyli_modules::{bus::BusMessage, module_bus_client};
 use hyli_net::ordered_join_set::OrderedJoinSet;
@@ -32,16 +34,10 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-use storage::Storage;
-use verify_tx::DataProposalVerdict;
-// Pick one of the two implementations
-// use storage_memory::LanesStorage;
-// Pick one of the two implementations by changing the re-export below.
-// pub use storage_memory::{shared_lanes_storage, LanesStorage};
-use hyli_crypto::BlstCrypto;
-pub use storage_fjall::{shared_lanes_storage, LanesStorage};
+pub use storage::{shared_lanes_storage, LanesStorage};
 use strum_macros::IntoStaticStr;
 use tracing::{debug, info};
+use verify_tx::DataProposalVerdict;
 
 pub mod api;
 pub mod block_construction;
@@ -49,9 +45,8 @@ pub mod dissemination;
 pub mod metrics;
 pub mod module;
 pub mod own_lane;
+pub mod proposal_storage;
 pub mod storage;
-pub mod storage_fjall;
-pub mod storage_memory;
 pub mod verifiers;
 pub mod verify_tx;
 
@@ -108,6 +103,8 @@ pub struct MempoolStore {
     // Skipped to clear on reset
     #[borsh(skip)]
     buffered_entries: BTreeMap<LaneId, HashMap<DataProposalHash, BufferedEntry>>,
+    #[borsh(skip)]
+    pending_chain_timestamp_entries: BTreeMap<LaneId, HashMap<DataProposalHash, BufferedEntry>>,
     // Skipped to clear on reset
     #[borsh(skip)]
     buffered_votes: BTreeMap<LaneId, BTreeMap<DataProposalHash, Vec<ValidatorDAG>>>,
@@ -138,6 +135,7 @@ pub struct Mempool {
     crypto: SharedBlstCrypto,
     metrics: MempoolMetrics,
     lanes: LanesStorage,
+    durability: DataProposalDurability,
     proof_verifiers: Arc<ProofVerifierService>,
     inner: MempoolStore,
 }
@@ -230,11 +228,15 @@ impl IntoHeaderSignableData for MempoolNetMessage {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ProcessedDPEvent {
     OnHashedDataProposal((LaneId, DataProposal, ValidatorDAG)),
-    OnProcessedDataProposal((LaneId, DataProposalVerdict, DataProposal)),
+    OnProcessedDataProposal((LaneId, DataProposalVerdict, DataProposal, bool)),
     OnHashedSyncReply((LaneId, Vec<ValidatorDAG>, DataProposal, DataProposalHash)),
 }
 
 impl Mempool {
+    pub(super) fn requires_current_chain_timestamp_for_dp_durability(&self) -> bool {
+        self.conf.data_proposal_durability.gcs_enabled()
+    }
+
     pub(super) fn restore_inflight_work(&mut self) {
         let txs_to_restore = self
             .inner
@@ -393,14 +395,21 @@ impl Mempool {
         match event {
             ProcessedDPEvent::OnHashedDataProposal((lane_id, data_proposal, vote)) => self
                 .on_hashed_data_proposal(&lane_id, data_proposal, vote)
+                .await
                 .context("Hashing data proposal"),
             ProcessedDPEvent::OnHashedSyncReply((lane_id, signatures, data_proposal, dp_hash)) => {
                 self.on_hashed_sync_reply(lane_id, signatures, data_proposal, dp_hash)
                     .await
                     .context("Handling sync reply data proposal")
             }
-            ProcessedDPEvent::OnProcessedDataProposal((lane_id, verdict, data_proposal)) => self
-                .on_processed_data_proposal(lane_id, verdict, data_proposal)
+            ProcessedDPEvent::OnProcessedDataProposal((
+                lane_id,
+                verdict,
+                data_proposal,
+                vote_ready,
+            )) => self
+                .on_processed_data_proposal(lane_id, verdict, data_proposal, vote_ready)
+                .await
                 .context("Processing data proposal"),
         }
     }
@@ -460,7 +469,8 @@ impl Mempool {
                     );
                 }
                 BlstCrypto::verify(&vdag).context("Invalid DataProposal vote signature")?;
-                self.on_data_proposal(&lane_id, data_proposal_hash, data_proposal, vdag.clone())?;
+                self.on_data_proposal(&lane_id, data_proposal_hash, data_proposal, vdag.clone())
+                    .await?;
                 self.on_data_vote(lane_id, vdag)?;
             }
             MempoolNetMessage::DataVote(lane_id, vdag) => {
