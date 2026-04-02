@@ -109,6 +109,7 @@ impl super::Mempool {
                 .clone();
             let next_hole = Self::fill_hole_from_entry(
                 &mut self.lanes,
+                &self.durability,
                 &mut self.bus,
                 buc,
                 &lane_id,
@@ -228,6 +229,7 @@ impl super::Mempool {
             };
             match Self::fill_hole_from_entry(
                 &mut self.lanes,
+                &self.durability,
                 &mut self.bus,
                 buc,
                 &lane_id,
@@ -263,6 +265,7 @@ impl super::Mempool {
     #[expect(clippy::too_many_arguments, reason = "Split to avoid double borrowing")]
     fn fill_hole_from_entry(
         lanes: &mut super::LanesStorage,
+        durability: &crate::shared_storage::DataProposalDurability,
         bus: &mut MempoolBusClient,
         buc: &mut BlockUnderConstruction,
         lane_id: &LaneId,
@@ -300,6 +303,7 @@ impl super::Mempool {
             signatures,
             cached_poda: None,
         };
+        durability.prime_persistence(lane_id.clone(), &data_proposal)?;
         lanes.put_no_verification(lane_id.clone(), (metadata, data_proposal))?;
         debug!(
             "Filled hole {} for lane {} in BUC (slot: {})",
@@ -758,15 +762,38 @@ impl super::Mempool {
 
 #[cfg(test)]
 pub mod test {
+    use std::sync::{Arc, Mutex};
+
+    use anyhow::Result;
     use hyli_crypto::BlstCrypto;
     use staking::state::Staking;
     use utils::TimestampMs;
 
     use crate::mempool::MempoolNetMessage;
+    use crate::shared_storage::{DataProposalDurability, DurabilityBackend};
     use crate::tests::autobahn_testing_macros::assert_chanmsg_matches;
 
     use super::super::tests::*;
     use super::*;
+
+    #[derive(Default)]
+    struct RecordingDurabilityBackend {
+        uploads: Mutex<Vec<(LaneId, DataProposalHash)>>,
+    }
+
+    impl DurabilityBackend for RecordingDurabilityBackend {
+        fn upload_data_proposal(
+            &self,
+            lane_id: LaneId,
+            dp_hash: DataProposalHash,
+            _payload: Vec<u8>,
+            _current_chain_timestamp: Option<String>,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'static>>
+        {
+            self.uploads.lock().unwrap().push((lane_id, dp_hash));
+            Box::pin(async { Ok(()) })
+        }
+    }
 
     #[test_log::test(tokio::test)]
     async fn signed_block_basic() -> Result<()> {
@@ -802,6 +829,63 @@ pub mod test {
                     vec![(LaneId::new(key.clone()), vec![dp_orig])]
                 );
             }
+        );
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn sync_reply_hole_fill_primes_durability() -> Result<()> {
+        let mut ctx = MempoolTestCtx::new("mempool").await;
+        let backend = Arc::new(RecordingDurabilityBackend::default());
+        ctx.mempool.durability =
+            DataProposalDurability::new_in_memory(backend.clone() as Arc<dyn DurabilityBackend>);
+
+        let peer_crypto = BlstCrypto::new("peer-sync-durability").unwrap();
+        let lane_id = LaneId::new(peer_crypto.validator_pubkey().clone());
+        let data_proposal = DataProposal::new_root(lane_id.clone(), vec![Transaction::default()]);
+        let dp_hash = data_proposal.hashed();
+        let lane_size = LaneBytesSize(data_proposal.estimate_size() as u64);
+        let signatures = vec![peer_crypto.sign((dp_hash.clone(), lane_size))?];
+
+        ctx.mempool
+            .inner
+            .blocks_under_contruction
+            .push_back(BlockUnderConstruction {
+                from: None,
+                ccp: CommittedConsensusProposal {
+                    consensus_proposal: ConsensusProposal {
+                        slot: 1,
+                        cut: vec![(
+                            lane_id.clone(),
+                            dp_hash.clone(),
+                            lane_size,
+                            AggregateSignature::default(),
+                        )],
+                        staking_actions: vec![],
+                        timestamp: TimestampMs(0),
+                        parent_hash: b"test".into(),
+                    },
+                    staking: Staking::default(),
+                    certificate: AggregateSignature::default(),
+                },
+                holes_tops: HashMap::from([(lane_id.clone(), (dp_hash.clone(), lane_size))]),
+                holes_materialized: false,
+            });
+
+        ctx.mempool
+            .on_hashed_sync_reply(
+                lane_id.clone(),
+                signatures,
+                data_proposal.clone(),
+                dp_hash.clone(),
+            )
+            .await?;
+
+        assert!(ctx.mempool.lanes.contains(&lane_id, &dp_hash));
+        assert_eq!(
+            backend.uploads.lock().unwrap().as_slice(),
+            &[(lane_id, dp_hash)]
         );
 
         Ok(())
