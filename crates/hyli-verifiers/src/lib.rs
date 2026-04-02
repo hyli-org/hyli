@@ -9,9 +9,6 @@ use tracing::debug;
 
 pub mod noir_utils;
 
-#[cfg(feature = "reth")]
-pub mod reth;
-
 pub fn verify(
     verifier: &Verifier,
     proof: &ProofData,
@@ -21,8 +18,6 @@ pub fn verify(
         #[cfg(feature = "cairo-m")]
         hyli_model::verifiers::CAIRO_M => cairo_m::verify(proof, program_id),
         hyli_model::verifiers::NOIR => noir::verify(proof, program_id),
-        #[cfg(feature = "reth")]
-        hyli_model::verifiers::RETH => reth::verify(proof, program_id),
         _ => Err(anyhow::anyhow!("{} verifier not implemented yet", verifier)),
     }
 }

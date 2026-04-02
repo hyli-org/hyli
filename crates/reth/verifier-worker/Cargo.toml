@@ -1,0 +1,45 @@
+[package]
+name = "hyli-reth-verifier-worker"
+description = "Reth stateless verifier and external worker for Hyli"
+license-file = { workspace = true }
+version = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+rust-version = { workspace = true }
+
+[lib]
+name = "hyli_reth_verifier_worker"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hyli-reth-verifier"
+path = "src/main.rs"
+
+[dependencies]
+hyli-model = { workspace = true, features = ["full"] }
+hyli-verifier-worker-core = { path = "../../verifier-worker" }
+
+anyhow = { workspace = true }
+bincode = { workspace = true }
+borsh = { workspace = true }
+hex = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
+
+reth-stateless = { workspace = true, features = ["k256"] }
+reth-ethereum = { workspace = true, features = ["evm"] }
+reth-ethereum-primitives = { workspace = true }
+reth-primitives-traits = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-eips = { workspace = true }
+alloy-genesis = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-rlp = { workspace = true }
+alloy-signer = { workspace = true }
+alloy-signer-local = { workspace = true }
+k256 = { workspace = true }
+
+[dev-dependencies]
+test-log = { workspace = true, features = ["color", "trace"] }

@@ -147,3 +147,12 @@ verifiers = ["risc0-3"]
 startup_timeout_ms = 5000
 request_timeout_ms = 30000
 auto_restart = true
+
+[verifier_workers.backends.reth]
+enabled = false
+command = "hyli-reth-verifier"
+args = []
+verifiers = ["reth"]
+startup_timeout_ms = 5000
+request_timeout_ms = 30000
+auto_restart = true
