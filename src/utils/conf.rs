@@ -178,7 +178,6 @@ impl Default for VerifierWorkersConf {
                 ..Default::default()
             },
         );
-
         Self {
             enabled: true,
             default_request_timeout_ms: 30_000,
@@ -319,6 +318,8 @@ impl Conf {
                     .with_list_parse_key("fast_catchup_peers")
                     .with_list_parse_key("verifier_workers.backends.jolt.args")
                     .with_list_parse_key("verifier_workers.backends.jolt.verifiers")
+                    .with_list_parse_key("verifier_workers.backends.reth.args")
+                    .with_list_parse_key("verifier_workers.backends.reth.verifiers")
                     .try_parsing(true),
             )
             .set_override_option("data_directory", data_directory)?
