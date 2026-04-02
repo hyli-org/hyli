@@ -313,6 +313,19 @@ impl super::Mempool {
                 unreachable!("DataProposal should be flushed once current_chain_timestamp exists");
             }
             DataProposalVerdict::Vote => {
+                if !vote_ready {
+                    debug!(
+                        "Delaying storage of DataProposal {:?} on lane {} until durable persistence completes",
+                        data_proposal.hashed(),
+                        lane_id
+                    );
+                    self.cached_dp_votes.insert(
+                        (lane_id.clone(), data_proposal.hashed()),
+                        DataProposalVerdict::VotePendingPersistence,
+                    );
+                    return Ok(());
+                }
+
                 trace!("Send vote for DataProposal");
                 let crypto = self.crypto.clone();
                 let (hash, size) =
@@ -323,16 +336,9 @@ impl super::Mempool {
                     data_proposal_hash: hash.clone(),
                     cumul_size: size,
                 })?;
-                if vote_ready {
-                    self.cached_dp_votes
-                        .insert((lane_id.clone(), hash.clone()), DataProposalVerdict::Vote);
-                    self.send_vote(&lane_id, hash.clone(), size)?;
-                } else {
-                    self.cached_dp_votes.insert(
-                        (lane_id.clone(), hash.clone()),
-                        DataProposalVerdict::VotePendingPersistence,
-                    );
-                }
+                self.cached_dp_votes
+                    .insert((lane_id.clone(), hash.clone()), DataProposalVerdict::Vote);
+                self.send_vote(&lane_id, hash.clone(), size)?;
 
                 while let Some(vote) = self
                     .inner
@@ -611,10 +617,20 @@ impl super::Mempool {
             return Ok(true);
         }
 
-        let Ok(lane_size) = self.lanes.get_lane_size_at(lane_id, received_hash) else {
-            self.cached_dp_votes
-                .remove(&(lane_id.clone(), received_hash.clone()));
-            return Ok(false);
+        let lane_size = match self.lanes.get_lane_size_at(lane_id, received_hash) {
+            Ok(size) => size,
+            Err(_) => {
+                let crypto = self.crypto.clone();
+                let (hash, size) =
+                    self.lanes
+                        .store_data_proposal(&crypto, lane_id, data_proposal.clone())?;
+                self.send_dissemination_event(DisseminationEvent::DpStored {
+                    lane_id: lane_id.clone(),
+                    data_proposal_hash: hash.clone(),
+                    cumul_size: size,
+                })?;
+                size
+            }
         };
 
         debug!(
@@ -658,6 +674,8 @@ impl super::Mempool {
 
 #[cfg(test)]
 pub mod test {
+    use std::{future::Future, pin::Pin, sync::Arc};
+
     use super::*;
     use crate::{
         mempool::{
@@ -665,6 +683,7 @@ pub mod test {
             MempoolNetMessage,
         },
         p2p::network::HeaderSigner,
+        shared_storage::{DataProposalDurability, DurabilityBackend},
     };
     use hyli_crypto::BlstCrypto;
     use hyli_model::{
@@ -672,6 +691,20 @@ pub mod test {
         ProgramId, ProofData, SignedByValidator, Transaction, TransactionData,
         VerifiedProofTransaction, Verifier,
     };
+
+    struct FailingDurabilityBackend;
+
+    impl DurabilityBackend for FailingDurabilityBackend {
+        fn upload_data_proposal(
+            &self,
+            _lane_id: LaneId,
+            _dp_hash: DataProposalHash,
+            _payload: Vec<u8>,
+            _current_chain_timestamp: Option<String>,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>> {
+            Box::pin(async { anyhow::bail!("durability failure") })
+        }
+    }
 
     #[test_log::test(tokio::test)]
     async fn test_get_verdict() {
@@ -874,6 +907,36 @@ pub mod test {
             .pending_chain_timestamp_entries
             .get(&lane_id)
             .is_none_or(|entries| !entries.contains_key(&data_proposal_hash)));
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_vote_dp_is_not_stored_when_durability_fails() -> Result<()> {
+        let mut ctx = MempoolTestCtx::new("mempool").await;
+        ctx.mempool.durability =
+            DataProposalDurability::new_in_memory(Arc::new(FailingDurabilityBackend));
+
+        let lane_id = LaneId::new(ctx.mempool.crypto.validator_pubkey().clone());
+        let data_proposal = DataProposal::new_root(lane_id.clone(), vec![Transaction::default()]);
+        let data_proposal_hash = data_proposal.hashed();
+        let vote = ctx
+            .mempool
+            .crypto
+            .sign((data_proposal_hash.clone(), LaneBytesSize(0)))?;
+
+        ctx.mempool
+            .on_hashed_data_proposal(&lane_id, data_proposal.clone(), vote)
+            .await?;
+        ctx.handle_processed_data_proposals().await;
+
+        assert_eq!(
+            ctx.mempool
+                .cached_dp_votes
+                .get(&(lane_id.clone(), data_proposal_hash.clone())),
+            Some(&DataProposalVerdict::VotePendingPersistence)
+        );
+        assert!(!ctx.mempool.lanes.contains(&lane_id, &data_proposal_hash));
 
         Ok(())
     }
