@@ -267,9 +267,5 @@ pub async fn send_transaction<S: StateUpdater>(
 }
 
 pub async fn find_available_port() -> u16 {
-    let listener = hyli_net::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
-    let addr = listener.local_addr().unwrap();
-    addr.port()
+    hyli_net::test_utils::find_available_port_sync()
 }

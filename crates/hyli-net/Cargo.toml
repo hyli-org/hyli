@@ -40,6 +40,7 @@ opentelemetry = { workspace = true }
 tracing-opentelemetry = { workspace = true, optional = true }
 
 [dev-dependencies]
+libc = "0.2"
 rand = { workspace = true, features = ["std"] }
 seq-macro = { workspace = true }
 test-log = { workspace = true, features = ["color", "trace"] }
@@ -51,3 +52,7 @@ hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
 turmoil = ["dep:turmoil", "hyli-turmoil-shims/turmoil"]
 instrumentation = ["tracing/attributes", "dep:tracing-opentelemetry"]
 bus = ["dep:hyli-bus"]
+test-utils = ["dep:libc"]
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", optional = true }
