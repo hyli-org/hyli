@@ -1210,11 +1210,11 @@ where
 pub mod tests {
     use std::collections::HashSet;
 
+    use crate::clock::TimestampMsClock;
+    use crate::tcp::{p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent};
     use anyhow::Result;
     use borsh::{BorshDeserialize, BorshSerialize};
     use hyli_crypto::BlstCrypto;
-    use crate::clock::TimestampMsClock;
-    use crate::tcp::{p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent};
 
     use super::P2PTcpEvent;
 

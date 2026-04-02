@@ -12,6 +12,7 @@ pub fn find_available_port_sync() -> u16 {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(REGISTRY_PATH)
         .expect("Failed to open port registry");
 
@@ -51,10 +52,7 @@ pub fn find_available_port_sync() -> u16 {
         .lines()
         .filter(|line| {
             let mut parts = line.split_whitespace();
-            let pid: u32 = parts
-                .next()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
+            let pid: u32 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
             unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
         })
         .map(|l| format!("{l}\n"))
