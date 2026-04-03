@@ -2,6 +2,16 @@
 ARG DEP_IMAGE=rust:bookworm
 # Preloaded with bb and risc0 (on x86)
 ARG BASE_IMAGE=ghcr.io/hyli-org/base:main
+# Pre-built verifier worker images
+ARG SP1_VERIFIER_IMAGE=ghcr.io/hyli-org/hyli-sp1-verifier:main
+ARG RISC0_VERIFIER_IMAGE=ghcr.io/hyli-org/hyli-risc0-verifier:main
+ARG JOLT_VERIFIER_IMAGE=ghcr.io/hyli-org/hyli-jolt-verifier:main
+ARG RETH_VERIFIER_IMAGE=ghcr.io/hyli-org/hyli-reth-verifier:main
+
+FROM ${SP1_VERIFIER_IMAGE} AS sp1-verifier
+FROM ${RISC0_VERIFIER_IMAGE} AS risc0-verifier
+FROM ${JOLT_VERIFIER_IMAGE} AS jolt-verifier
+FROM ${RETH_VERIFIER_IMAGE} AS reth-verifier
 
 FROM ${DEP_IMAGE} AS builder
 
@@ -13,10 +23,6 @@ COPY .cargo/config.toml .cargo/config.toml
 COPY src ./src
 COPY crates ./crates
 RUN cargo build --release -F risc0 -F rate-proxy;
-RUN cargo build --release -p hyli-jolt-verifier-worker
-RUN cargo build --release -p hyli-risc0-verifier-worker
-RUN cargo build --release -p hyli-sp1-verifier-worker
-RUN cargo build --release -p hyli-reth-verifier-worker
 
 # RUNNER
 FROM ${BASE_IMAGE} AS runner
@@ -31,10 +37,10 @@ COPY --from=builder /usr/src/hyli/target/release/gcs_uploader              ./
 COPY --from=builder /usr/src/hyli/target/release/smt_auto_prover           ./
 COPY --from=builder /usr/src/hyli/target/release/health_check              ./
 COPY --from=builder /usr/src/hyli/target/release/rate_limiter_proxy        ./
-COPY --from=builder /usr/src/hyli/target/release/hyli-jolt-verifier        ./
-COPY --from=builder /usr/src/hyli/target/release/hyli-risc0-verifier       ./
-COPY --from=builder /usr/src/hyli/target/release/hyli-sp1-verifier         ./
-COPY --from=builder /usr/src/hyli/target/release/hyli-reth-verifier        ./
+COPY --from=sp1-verifier   /hyli-sp1-verifier                             ./
+COPY --from=risc0-verifier /hyli-risc0-verifier                            ./
+COPY --from=jolt-verifier  /hyli-jolt-verifier                             ./
+COPY --from=reth-verifier  /hyli-reth-verifier                             ./
 
 VOLUME /hyli/data
 
