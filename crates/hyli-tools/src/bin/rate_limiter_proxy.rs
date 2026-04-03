@@ -31,25 +31,22 @@ use tower_http::catch_panic::CatchPanicLayer;
 /// Extract client IP from common proxy headers, falling back to "unknown".
 fn extract_client_ip<B>(req: &Request<B>) -> String {
     // Check X-Forwarded-For first (may contain comma-separated list)
-    if let Some(val) = req.headers().get("x-forwarded-for") {
-        if let Ok(s) = val.to_str() {
-            if let Some(first) = s.split(',').next() {
+    if let Some(val) = req.headers().get("x-forwarded-for")
+        && let Ok(s) = val.to_str()
+            && let Some(first) = s.split(',').next() {
                 let ip = first.trim();
                 if !ip.is_empty() {
                     return ip.to_string();
                 }
             }
-        }
-    }
     // Then X-Real-Ip
-    if let Some(val) = req.headers().get("x-real-ip") {
-        if let Ok(s) = val.to_str() {
+    if let Some(val) = req.headers().get("x-real-ip")
+        && let Ok(s) = val.to_str() {
             let ip = s.trim();
             if !ip.is_empty() {
                 return ip.to_string();
             }
         }
-    }
     "unknown".to_string()
 }
 
