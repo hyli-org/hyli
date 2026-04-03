@@ -59,7 +59,6 @@ ureq = { workspace = true, features = ["json"] }
 
 # Rate limiting proxy (optional feature)
 axum = { workspace = true, optional = true }
-tower_governor = { workspace = true, optional = true }
 tower-http = { workspace = true, features = [
   "trace",
   "cors",
@@ -76,7 +75,6 @@ notify = { version = "8.2.0", optional = true }
 risc0 = ["client-sdk/risc0"]
 rate-proxy = [
   "dep:axum",
-  "dep:tower_governor",
   "dep:tower-http",
   "dep:hyper",
   "dep:hyper-util",
@@ -85,7 +83,7 @@ rate-proxy = [
   "dep:notify",
 ]
 
-default = ["ui", "rate-proxy"]
+default = ["rate-proxy"]
 ui = ["dep:ratatui", "dep:crossterm"]
 turmoil = []
 

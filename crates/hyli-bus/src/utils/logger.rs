@@ -13,14 +13,14 @@ mod otlp_metrics {
     use hyli_turmoil_shims::init_global_meter_provider;
     use opentelemetry_otlp::WithExportConfig;
     use opentelemetry_sdk::metrics::periodic_reader_with_async_runtime::PeriodicReader;
-    use opentelemetry_sdk::metrics::{MetricResult, SdkMeterProvider};
+    use opentelemetry_sdk::metrics::SdkMeterProvider;
     use opentelemetry_sdk::{runtime, Resource};
 
     pub fn init(
         endpoint: String,
         service_name: String,
         push_interval: Option<std::time::Duration>,
-    ) -> MetricResult<()> {
+    ) -> Result<(), opentelemetry_otlp::ExporterBuildError> {
         let exporter = opentelemetry_otlp::MetricExporter::builder()
             .with_tonic()
             .with_endpoint(endpoint)
