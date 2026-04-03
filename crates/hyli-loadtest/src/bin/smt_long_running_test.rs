@@ -121,7 +121,7 @@ impl ContractBootstrap {
                 vec![
                     RegisterContractAction {
                         contract_name: contract_name.clone(),
-                        verifier: "risc0-3".into(),
+                        verifier: "test".into(),
                         program_id: SMT_TOKEN_PROGRAM_ID.to_vec().into(),
                         state_commitment: smt_state_commitment(&initial_state),
                         constructor_metadata: Some(constructor_metadata.clone()),

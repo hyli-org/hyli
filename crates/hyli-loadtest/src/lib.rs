@@ -440,7 +440,7 @@ pub async fn send_transaction<S: StateUpdater>(
     tx_hash
 }
 
-pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Result<()> {
+pub async fn long_running_test(node_url: String) -> Result<()> {
     let mut client = NodeApiHttpClient::new(node_url.clone())?;
     client.api_key = Some("KEY_LOADTEST".to_string());
 
@@ -449,10 +449,7 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
     let random_hyllar_contract: ContractName = format!("hyllar_{rand}").into();
     let random_hydentity_contract: ContractName = format!("hydentity_{rand}").into();
 
-    let verifier = match use_test_verifier {
-        true => hyli_contract_sdk::Verifier("test".to_string()),
-        false => hyli_contract_sdk::Verifier("risc0-3".to_string()),
-    };
+    let verifier = hyli_contract_sdk::Verifier("test".to_string());
 
     let tx = BlobTransaction::new(
         Identity::new("hyli@hyli"),
@@ -487,31 +484,17 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
         hyllar: Hyllar::custom(format!("faucet@{random_hydentity_contract}")),
         hyllar_name: random_hyllar_contract.clone(),
     });
-    if use_test_verifier {
-        tx_ctx = tx_ctx
-            .with_prover(
-                random_hydentity_contract.clone(),
-                TxExecutorTestProver::<Hyllar>::new(),
-            )
-            .with_prover(
-                random_hyllar_contract.clone(),
-                TxExecutorTestProver::<Hyllar>::new(),
-            );
-    } else {
-        tx_ctx = tx_ctx
-            .with_prover(
-                random_hydentity_contract.clone(),
-                NoopProver::<Hydentity>::new(
-                    &hydentity::client::tx_executor_handler::metadata::PROGRAM_ID,
-                ),
-            )
-            .with_prover(
-                random_hyllar_contract.clone(),
-                NoopProver::<Hyllar>::new(
-                    &hyllar::client::tx_executor_handler::metadata::PROGRAM_ID,
-                ),
-            );
-    }
+    tx_ctx = tx_ctx
+        .with_prover(
+            random_hydentity_contract.clone(),
+            NoopProver::<Hydentity>::new(
+                &hydentity::client::tx_executor_handler::metadata::PROGRAM_ID,
+            ),
+        )
+        .with_prover(
+            random_hyllar_contract.clone(),
+            NoopProver::<Hyllar>::new(&hyllar::client::tx_executor_handler::metadata::PROGRAM_ID),
+        );
     let mut tx_ctx = tx_ctx.build();
 
     let faucet_ident = Identity(format!("faucet@{}", random_hydentity_contract.0));

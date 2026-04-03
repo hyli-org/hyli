@@ -35,11 +35,13 @@ members = [
 ]
 default-members = [
   "crates/contracts",
+  "crates/hyli-loadtest",
   "crates/hyli-model",
   "crates/hyli-crypto",
   "crates/hyli-turmoil-shims",
   "crates/hyli-net",
   "crates/hyli-modules",
+  "crates/hyli-tools",
   ".",
 ]
 resolver = "2"
