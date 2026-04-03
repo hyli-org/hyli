@@ -9,7 +9,7 @@ mod fixtures;
 
 mod e2e_consensus {
 
-    use client_sdk::helpers::NoopProver;
+    use client_sdk::helpers::TestProver;
     use client_sdk::rest_client::NodeApiClient;
     use client_sdk::transaction_builder::{ProvableBlobTx, TxExecutor, TxExecutorBuilder};
     use fixtures::test_helpers::send_transaction;
@@ -94,19 +94,19 @@ mod e2e_consensus {
             // Replace prover binaries for non-reproducible mode.
             .with_prover(
                 "hydentity".into(),
-                NoopProver::<Hydentity>::new(
+                TestProver::<Hydentity>::new(
                     &hydentity::client::tx_executor_handler::metadata::PROGRAM_ID,
                 ),
             )
             .with_prover(
                 "hyllar".into(),
-                NoopProver::<Hyllar>::new(
+                TestProver::<Hyllar>::new(
                     &hyllar::client::tx_executor_handler::metadata::PROGRAM_ID,
                 ),
             )
             .with_prover(
                 "staking".into(),
-                NoopProver::<Staking>::new(
+                TestProver::<Staking>::new(
                     &staking::client::tx_executor_handler::metadata::PROGRAM_ID,
                 ),
             )
@@ -298,13 +298,13 @@ mod e2e_consensus {
             // Replace prover binaries for non-reproducible mode.
             .with_prover(
                 "hydentity".into(),
-                NoopProver::<Hydentity>::new(
+                TestProver::<Hydentity>::new(
                     &hydentity::client::tx_executor_handler::metadata::PROGRAM_ID,
                 ),
             )
             .with_prover(
                 "hyllar".into(),
-                NoopProver::<Hyllar>::new(
+                TestProver::<Hyllar>::new(
                     &hyllar::client::tx_executor_handler::metadata::PROGRAM_ID,
                 ),
             )

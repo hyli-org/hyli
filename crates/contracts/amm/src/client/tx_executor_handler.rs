@@ -56,7 +56,7 @@ impl Amm {
             metadata::PROGRAM_ID,
         );
         #[cfg(not(feature = "risc0"))]
-        let prover = client_sdk::helpers::NoopProver::<Amm>::new(&metadata::PROGRAM_ID);
+        let prover = client_sdk::helpers::TestProver::<Amm>::new(&metadata::PROGRAM_ID);
         builder.init_with(contract_name, prover);
     }
 }

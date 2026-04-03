@@ -3,7 +3,7 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use client_sdk::helpers::NoopProver;
+use client_sdk::helpers::TestProver;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use client_sdk::transaction_builder::ProvableBlobTx;
 use hyli_contract_sdk::{BlobTransaction, ContractName, Identity, RegisterContractAction};
@@ -388,7 +388,7 @@ async fn main() -> Result<()> {
 
     let auto_prover_ctx = Arc::new(AutoProverCtx {
         data_directory: config.data_directory.clone(),
-        prover: Arc::new(NoopProver::<SmtTokenContract>::new(
+        prover: Arc::new(TestProver::<SmtTokenContract>::new(
             &smt_token::client::tx_executor_handler::metadata::PROGRAM_ID,
         )),
         contract_name: bootstrap.contract_name.clone(),
@@ -401,7 +401,7 @@ async fn main() -> Result<()> {
     });
 
     handler
-        .build_module::<AutoProver<SmtTokenProvableState, NoopProver<SmtTokenContract>>>(
+        .build_module::<AutoProver<SmtTokenProvableState, TestProver<SmtTokenContract>>>(
             auto_prover_ctx,
         )
         .await

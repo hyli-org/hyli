@@ -9,7 +9,7 @@ use anyhow::Result;
 mod e2e_hyllar {
     use client_sdk::{
         contract_states,
-        helpers::NoopProver,
+        helpers::TestProver,
         rest_client::NodeApiClient,
         transaction_builder::{ProvableBlobTx, TxExecutorBuilder, TxExecutorHandler},
     };
@@ -44,13 +44,13 @@ mod e2e_hyllar {
             // Replace prover binaries for non-reproducible mode.
             .with_prover(
                 "hydentity".into(),
-                NoopProver::<Hydentity>::new(
+                TestProver::<Hydentity>::new(
                     &hydentity::client::tx_executor_handler::metadata::PROGRAM_ID,
                 ),
             )
             .with_prover(
                 "hyllar".into(),
-                NoopProver::<Hyllar>::new(
+                TestProver::<Hyllar>::new(
                     &hyllar::client::tx_executor_handler::metadata::PROGRAM_ID,
                 ),
             )

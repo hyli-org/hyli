@@ -22,7 +22,7 @@ impl UuidTld {
             metadata::PROGRAM_ID,
         );
         #[cfg(not(feature = "risc0"))]
-        let prover = client_sdk::helpers::NoopProver::<UuidTld>::new(&metadata::PROGRAM_ID);
+        let prover = client_sdk::helpers::TestProver::<UuidTld>::new(&metadata::PROGRAM_ID);
         builder.init_with(contract_name, prover);
     }
 }

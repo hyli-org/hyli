@@ -2,7 +2,7 @@ use crate::node_state::{test::new_node_state, NodeState};
 
 use super::*;
 use crate::modules::contract_listener::{ContractChangeData, ContractListenerEvent, ContractTx};
-use client_sdk::helpers::NoopProver;
+use client_sdk::helpers::TestProver;
 use client_sdk::rest_client::test::NodeApiMockClient;
 use hyli_model::api::ContractChangeType;
 use rand::{rng, Rng};
@@ -95,7 +95,7 @@ impl TxExecutorHandler for TestContract {
     }
 }
 
-type TestAutoProver = AutoProver<TestContract, NoopProver<TestContract>>;
+type TestAutoProver = AutoProver<TestContract, TestProver<TestContract>>;
 static TEST_TEMP_DIRS: LazyLock<Mutex<Vec<TempDir>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
 async fn setup_with_timeout(
@@ -156,7 +156,7 @@ async fn new_buffering_auto_prover(
     let data_dir = temp_dir.path().to_path_buf();
     let ctx = Arc::new(AutoProverCtx {
         data_directory: data_dir,
-        prover: Arc::new(NoopProver::<TestContract>::default()),
+        prover: Arc::new(TestProver::<TestContract>::default()),
         contract_name: ContractName("test".into()),
         api: None,
         node: api_client,

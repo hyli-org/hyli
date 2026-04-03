@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use client_sdk::{
-    helpers::NoopProver,
+    helpers::TestProver,
     rest_client::{NodeApiClient, NodeApiHttpClient},
     transaction_builder::{ProvableBlobTx, TxExecutorBuilder},
 };
@@ -47,17 +47,17 @@ async fn faucet_and_delegate(
         // Replace prover binaries for non-reproducible mode.
         .with_prover(
             "hydentity".into(),
-            NoopProver::<Hydentity>::new(
+            TestProver::<Hydentity>::new(
                 &hydentity::client::tx_executor_handler::metadata::PROGRAM_ID,
             ),
         )
         .with_prover(
             "hyllar".into(),
-            NoopProver::<Hyllar>::new(&hyllar::client::tx_executor_handler::metadata::PROGRAM_ID),
+            TestProver::<Hyllar>::new(&hyllar::client::tx_executor_handler::metadata::PROGRAM_ID),
         )
         .with_prover(
             "staking".into(),
-            NoopProver::<Staking>::new(&staking::client::tx_executor_handler::metadata::PROGRAM_ID),
+            TestProver::<Staking>::new(&staking::client::tx_executor_handler::metadata::PROGRAM_ID),
         )
         .build();
 

@@ -18,7 +18,7 @@
 //
 //     use client_sdk::{
 //         contract_states,
-//         helpers::NoopProver,
+//         helpers::TestProver,
 //         transaction_builder::{ProvableBlobTx, TxExecutorBuilder, TxExecutorHandler},
 //     };
 //     use fixtures::proofs::generate_recursive_proof;
@@ -125,17 +125,17 @@
 //         // Replace prover binaries for non-reproducible mode.
 //         .with_prover(
 //             "hydentity".into(),
-//             NoopProver::<Hydentity>::new(),
+//             TestProver::<Hydentity>::new(),
 //         )
 //         .with_prover(
 //             "hyllar".into(),
-//             NoopProver::<Hyllar>::new(),
+//             TestProver::<Hyllar>::new(),
 //         )
 //         .with_prover(
 //             "hyllar2".into(),
-//             NoopProver::<Hyllar>::new(),
+//             TestProver::<Hyllar>::new(),
 //         )
-//         .with_prover("amm".into(), NoopProver::<Amm>::new())
+//         .with_prover("amm".into(), TestProver::<Amm>::new())
 //         .build();
 //
 //         let hyllar_initial_total_amount: u128 = executor

@@ -53,7 +53,7 @@ impl Hydentity {
         let prover =
             client_sdk::helpers::risc0::Risc0Prover::new(HYDENTITY_ELF.to_vec(), PROGRAM_ID);
         #[cfg(not(feature = "risc0"))]
-        let prover = client_sdk::helpers::NoopProver::<Self>::new(&PROGRAM_ID);
+        let prover = client_sdk::helpers::TestProver::<Self>::new(&PROGRAM_ID);
         builder.init_with(contract_name, prover);
     }
 }

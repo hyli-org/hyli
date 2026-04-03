@@ -3,7 +3,7 @@ use std::ops::Deref;
 
 use client_sdk::{
     contract_states,
-    helpers::NoopProver,
+    helpers::TestProver,
     rest_client::NodeApiClient,
     transaction_builder::{ProvableBlobTx, TxExecutorBuilder, TxExecutorHandler},
 };
@@ -65,11 +65,11 @@ async fn test_uuid_registration() {
     })
     .with_prover(
         "hydentity".into(),
-        NoopProver::<Hydentity>::new(&hydentity::client::tx_executor_handler::metadata::PROGRAM_ID),
+        TestProver::<Hydentity>::new(&hydentity::client::tx_executor_handler::metadata::PROGRAM_ID),
     )
     .with_prover(
         "uuid".into(),
-        NoopProver::<UuidTld>::new(&uuid_tld::client::tx_executor_handler::metadata::PROGRAM_ID),
+        TestProver::<UuidTld>::new(&uuid_tld::client::tx_executor_handler::metadata::PROGRAM_ID),
     )
     .build();
 

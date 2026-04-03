@@ -250,7 +250,7 @@ impl SmtTokenProvableState {
         );
         #[cfg(not(feature = "risc0"))]
         let prover =
-            client_sdk::helpers::NoopProver::<SmtTokenContract>::new(&metadata::PROGRAM_ID);
+            client_sdk::helpers::TestProver::<SmtTokenContract>::new(&metadata::PROGRAM_ID);
         builder.init_with(contract_name, prover);
     }
 

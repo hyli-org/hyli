@@ -2,7 +2,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use client_sdk::helpers::test::MockProver;
-use client_sdk::helpers::NoopProver;
+use client_sdk::helpers::TestProver;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use client_sdk::tcp_client::{TcpApiClient, TcpServerMessage};
 use client_sdk::transaction_builder::{
@@ -487,13 +487,13 @@ pub async fn long_running_test(node_url: String) -> Result<()> {
     tx_ctx = tx_ctx
         .with_prover(
             random_hydentity_contract.clone(),
-            NoopProver::<Hydentity>::new(
+            TestProver::<Hydentity>::new(
                 &hydentity::client::tx_executor_handler::metadata::PROGRAM_ID,
             ),
         )
         .with_prover(
             random_hyllar_contract.clone(),
-            NoopProver::<Hyllar>::new(&hyllar::client::tx_executor_handler::metadata::PROGRAM_ID),
+            TestProver::<Hyllar>::new(&hyllar::client::tx_executor_handler::metadata::PROGRAM_ID),
         );
     let mut tx_ctx = tx_ctx.build();
 

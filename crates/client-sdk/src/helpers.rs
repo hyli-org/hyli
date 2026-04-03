@@ -83,12 +83,12 @@ pub trait ClientSdkProver<T: BorshSerialize + Send> {
 /// In-process prover used when a real ZK prover (e.g. risc0) is not available.
 /// Executes the contract logic directly and returns borsh-serialized `Vec<HyliOutput>`
 /// as the proof, compatible with the `"test"` verifier.
-pub struct NoopProver<Z> {
+pub struct TestProver<Z> {
     program_id: ProgramId,
     phantom: std::marker::PhantomData<Z>,
 }
 
-impl<Z> NoopProver<Z> {
+impl<Z> TestProver<Z> {
     pub fn new(program_id: &[u8]) -> Self {
         Self {
             program_id: ProgramId(program_id.to_vec()),
@@ -104,7 +104,7 @@ impl<Z> NoopProver<Z> {
     }
 }
 
-impl<Z> Default for NoopProver<Z> {
+impl<Z> Default for TestProver<Z> {
     fn default() -> Self {
         Self {
             program_id: ProgramId(vec![]),
@@ -115,14 +115,14 @@ impl<Z> Default for NoopProver<Z> {
 
 impl<
         Z: sdk::ZkContract + sdk::TransactionalZkContract + borsh::BorshDeserialize + 'static + Send,
-    > ClientSdkProver<Vec<Calldata>> for NoopProver<Z>
+    > ClientSdkProver<Vec<Calldata>> for TestProver<Z>
 {
     fn prove(
         &self,
         commitment_metadata: Vec<u8>,
         calldatas: Vec<Calldata>,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>> {
-        tracing::warn!("🚨🚨🚨 Using NoopProver which executes contract logic directly without generating real proofs. This should only be used for testing with the 'test' verifier.");
+        tracing::warn!("🚨🚨🚨 Using TestProver which executes contract logic directly without generating real proofs. This should only be used for testing with the 'test' verifier.");
         let outputs = sdk::guest::execute::<Z>(&commitment_metadata, &calldatas);
         Box::pin(async move {
             Ok(Proof {
