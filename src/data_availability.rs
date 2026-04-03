@@ -1192,18 +1192,21 @@ impl DataAvailability {
             .last()
             .map_or(start_height, |block| block.height());
 
-        // Collect all blocks from start_height to current highest
-        let processed_block_hashes: VecDeque<_> = self
-            .blocks
-            .range(start_height, highest + 1)
-            .filter_map(|item| item.ok())
-            .collect();
+        // If requester starts beyond our current tip, they are already caught up:
+        // the valid stream response is an empty queue (wait for future blocks), not BlockNotFound.
+        let processed_block_hashes: VecDeque<_> = if start_height > highest {
+            VecDeque::new()
+        } else {
+            // Collect all blocks from start_height to current highest.
+            self.blocks
+                .range(start_height, highest + 1)
+                .filter_map(|item| item.ok())
+                .collect()
+        };
         self.blocks
             .record_op("range_collect", "by_height", range_start.elapsed());
 
         let expected = highest.0.saturating_sub(start_height.0).saturating_add(1);
-        // If requester starts beyond our current tip, they are already caught up:
-        // the valid stream response is an empty queue (wait for future blocks), not BlockNotFound.
         let expected = if start_height > highest { 0 } else { expected };
         if processed_block_hashes.len() as u64 != expected {
             let first_missing = (start_height.0..=highest.0)
@@ -2189,6 +2192,58 @@ pub mod tests {
                 "Stream should close after rejecting sparse range"
             );
         }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_stream_from_height_above_tip_returns_empty_stream_without_rejection() {
+        let tmpdir = tempfile::tempdir().unwrap().keep();
+        let mut blocks_storage = Blocks::new(&tmpdir).await.unwrap();
+
+        let global_bus = crate::bus::SharedMessageBus::new();
+        let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
+
+        let mut config: Conf = Conf::new(vec![], None, None).unwrap();
+        config.da_server_port = find_available_port().await;
+        config.da_public_address = format!("127.0.0.1:{}", config.da_server_port);
+
+        let mut block = SignedBlock::default();
+        block.consensus_proposal.slot = 0;
+        blocks_storage.put(block.clone()).unwrap();
+        block.consensus_proposal.parent_hash = block.hashed();
+        block.consensus_proposal.slot = 1;
+        blocks_storage.put(block).unwrap();
+
+        let mut da = super::DataAvailability {
+            config: config.clone().into(),
+            bus,
+            blocks: blocks_storage,
+            buffered_signed_blocks: Default::default(),
+            catchupper: Default::default(),
+            allow_peer_catchup: false,
+            peer_send_queues: HashMap::new(),
+        };
+
+        tokio::spawn(async move {
+            da.start().await.unwrap();
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let mut client =
+            DataAvailabilityClient::connect("client_id", config.da_public_address.clone())
+                .await
+                .unwrap();
+
+        client
+            .send(DataAvailabilityRequest::StreamFromHeight(BlockHeight(10)))
+            .await
+            .unwrap();
+
+        let first_event = tokio::time::timeout(Duration::from_millis(500), client.recv()).await;
+        assert!(
+            first_event.is_err(),
+            "No event should be emitted when requester is already beyond tip"
+        );
     }
 
     #[test_log::test(tokio::test)]

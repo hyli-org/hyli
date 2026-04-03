@@ -736,16 +736,20 @@ impl GcsBlocks {
         min: BlockHeight,
         max: BlockHeight,
     ) -> impl Iterator<Item = Result<ConsensusProposalHash>> {
-        let values = match self.ensure_index_loaded() {
-            Ok(()) => self
-                .state
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .by_height
-                .range(min..max)
-                .map(|(_height, hash)| Ok(hash.clone()))
-                .collect(),
-            Err(err) => vec![Err(err)],
+        let values = if min >= max {
+            Vec::new()
+        } else {
+            match self.ensure_index_loaded() {
+                Ok(()) => self
+                    .state
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .by_height
+                    .range(min..max)
+                    .map(|(_height, hash)| Ok(hash.clone()))
+                    .collect(),
+                Err(err) => vec![Err(err)],
+            }
         };
         values.into_iter()
     }
@@ -998,5 +1002,31 @@ mod tests {
 
         assert!(matches!(blocks.backend, BlocksBackend::Fjall(_)));
         Ok(())
+    }
+
+    #[test]
+    fn gcs_range_returns_empty_when_min_is_not_less_than_max() {
+        let mut by_height = BTreeMap::new();
+        by_height.insert(BlockHeight(0), ConsensusProposalHash::default());
+
+        let equal: Vec<_> = by_height
+            .range(BlockHeight(1)..BlockHeight(1))
+            .map(|(_, hash)| hash.clone())
+            .collect();
+        assert!(equal.is_empty());
+
+        let values: Vec<anyhow::Result<ConsensusProposalHash>> = if BlockHeight(2) >= BlockHeight(1)
+        {
+            Vec::new()
+        } else {
+            by_height
+                .range(BlockHeight(2)..BlockHeight(1))
+                .map(|(_, hash)| Ok(hash.clone()))
+                .collect()
+        };
+        assert!(
+            values.is_empty(),
+            "Invalid GCS-backed ranges should return an empty iterator instead of panicking"
+        );
     }
 }
