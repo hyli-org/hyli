@@ -148,10 +148,7 @@ impl<
         self.program_id.clone()
     }
 
-    async fn new_from_registry(
-        _contract_name: &ContractName,
-        program_id: ProgramId,
-    ) -> Result<Self>
+    async fn new_from_registry(_contract_name: &ContractName, program_id: ProgramId) -> Result<Self>
     where
         Self: Sized,
     {
