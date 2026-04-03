@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use client_sdk::{
-    contract_indexer::utoipa::OpenApi, helpers::test::TxExecutorTestProver,
+    contract_indexer::utoipa::OpenApi, helpers::NoopProver,
     rest_client::test::NodeApiMockClient,
 };
 use crossterm::{
@@ -196,11 +196,11 @@ async fn main() -> Result<()> {
     // As an example/feature, run a prover alongside the block debugger.
     #[allow(dead_code)]
     if false {
-        let prover = TxExecutorTestProver::<SmtTokenContract>::new();
+        let prover = NoopProver::<SmtTokenContract>::default();
         let node_client = NodeApiMockClient::new();
         node_client.set_block_height(BlockHeight(4000));
         handler
-            .build_module::<AutoProver<SmtTokenProvableState, TxExecutorTestProver<SmtTokenContract>>>(Arc::new(AutoProverCtx {
+            .build_module::<AutoProver<SmtTokenProvableState, NoopProver<SmtTokenContract>>>(Arc::new(AutoProverCtx {
                 data_directory: data_dir.clone(),
                 prover: Arc::new(prover),
                 contract_name: "oranj".into(),

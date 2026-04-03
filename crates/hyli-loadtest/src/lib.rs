@@ -1,7 +1,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use client_sdk::helpers::test::{MockProver, TxExecutorTestProver};
+use client_sdk::helpers::test::MockProver;
 use client_sdk::helpers::NoopProver;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use client_sdk::tcp_client::{TcpApiClient, TcpServerMessage};
