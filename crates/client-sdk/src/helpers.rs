@@ -80,6 +80,86 @@ pub trait ClientSdkProver<T: BorshSerialize + Send> {
     fn verifier(&self) -> Verifier;
 }
 
+/// In-process prover used when a real ZK prover (e.g. risc0) is not available.
+/// Executes the contract logic directly and returns borsh-serialized `Vec<HyliOutput>`
+/// as the proof, compatible with the `"test"` verifier.
+pub struct TestProver<Z> {
+    program_id: ProgramId,
+    phantom: std::marker::PhantomData<Z>,
+}
+
+impl<Z> TestProver<Z> {
+    pub fn new(program_id: &[u8]) -> Self {
+        Self {
+            program_id: ProgramId(program_id.to_vec()),
+            phantom: std::marker::PhantomData,
+        }
+    }
+
+    pub fn new_with_program_id(program_id: ProgramId) -> Self {
+        Self {
+            program_id,
+            phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<Z> Default for TestProver<Z> {
+    fn default() -> Self {
+        Self {
+            program_id: ProgramId(vec![]),
+            phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<
+        Z: sdk::ZkContract + sdk::TransactionalZkContract + borsh::BorshDeserialize + 'static + Send,
+    > ClientSdkProver<Vec<Calldata>> for TestProver<Z>
+{
+    fn prove(
+        &self,
+        commitment_metadata: Vec<u8>,
+        calldatas: Vec<Calldata>,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>> {
+        tracing::warn!("🚨🚨🚨 Using TestProver which executes contract logic directly without generating real proofs. This should only be used for testing with the 'test' verifier.");
+        let outputs = sdk::guest::execute::<Z>(&commitment_metadata, &calldatas);
+        Box::pin(async move {
+            Ok(Proof {
+                data: ProofData(borsh::to_vec(&outputs).expect("serializing noop proof outputs")),
+                metadata: sdk::ProofMetadata {
+                    cycles: None,
+                    prover: Some("noop".to_string()),
+                    id: None,
+                },
+            })
+        })
+    }
+
+    fn info(&self) -> ProverInfo {
+        ProverInfo {
+            name: "noop".to_string(),
+            zkvm: "noop".to_string(),
+            version: "0".to_string(),
+        }
+    }
+
+    fn program_id(&self) -> ProgramId {
+        self.program_id.clone()
+    }
+
+    async fn new_from_registry(_contract_name: &ContractName, program_id: ProgramId) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        Ok(Self::new_with_program_id(program_id))
+    }
+
+    fn verifier(&self) -> Verifier {
+        "test".into()
+    }
+}
+
 #[cfg(feature = "risc0")]
 pub mod risc0 {
 
@@ -414,87 +494,9 @@ pub mod sp1 {
 }
 
 pub mod test {
-    use borsh::BorshDeserialize;
-    use sdk::{ProofMetadata, TransactionalZkContract, ZkContract};
+    use sdk::ProofMetadata;
 
     use super::*;
-
-    /// Generates valid proofs for the 'test' verifier using the TxExecutor
-    pub struct TxExecutorTestProver<C: ZkContract> {
-        program_id: ProgramId,
-        phantom: std::marker::PhantomData<C>,
-    }
-
-    impl<C: ZkContract> TxExecutorTestProver<C> {
-        pub fn new() -> Self {
-            Self {
-                program_id: ProgramId(vec![]),
-                phantom: std::marker::PhantomData,
-            }
-        }
-
-        pub fn new_with_program_id(program_id: ProgramId) -> Self {
-            Self {
-                program_id,
-                phantom: std::marker::PhantomData,
-            }
-        }
-    }
-
-    impl<C: ZkContract> Default for TxExecutorTestProver<C> {
-        fn default() -> Self {
-            Self::new()
-        }
-    }
-
-    impl<C: ZkContract + TransactionalZkContract + BorshDeserialize + 'static>
-        ClientSdkProver<Vec<Calldata>> for TxExecutorTestProver<C>
-    {
-        fn prove(
-            &self,
-            commitment_metadata: Vec<u8>,
-            calldatas: Vec<Calldata>,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>>
-        {
-            let hos = sdk::guest::execute::<C>(&commitment_metadata, &calldatas);
-            Box::pin(async move {
-                Ok(Proof {
-                    data: ProofData(borsh::to_vec(&hos).unwrap()),
-                    metadata: ProofMetadata {
-                        cycles: None,
-                        prover: None,
-                        id: None,
-                    },
-                })
-            })
-        }
-
-        fn info(&self) -> ProverInfo {
-            ProverInfo {
-                name: "TxExecutorTestProver".to_string(),
-                zkvm: "tx_executor".to_string(),
-                version: "1.0.0".to_string(),
-            }
-        }
-
-        fn program_id(&self) -> ProgramId {
-            self.program_id.clone()
-        }
-
-        async fn new_from_registry(
-            _contract_name: &ContractName,
-            program_id: ProgramId,
-        ) -> Result<Self>
-        where
-            Self: Sized,
-        {
-            Ok(Self::new_with_program_id(program_id))
-        }
-
-        fn verifier(&self) -> Verifier {
-            "test".into()
-        }
-    }
 
     pub struct MockProver {}
 

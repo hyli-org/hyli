@@ -71,9 +71,6 @@ enum SendCommands {
 
     #[command(alias = "lrt")]
     LongRunningTest,
-
-    #[command(alias = "lrtt")]
-    LongRunningTestTest,
 }
 
 #[tokio::main]
@@ -150,12 +147,7 @@ async fn main() -> Result<(), Error> {
         SendCommands::LongRunningTest => {
             let url = format!("http://{}:{}/", args.host, args.port);
             info!("Starting long running test on {}", url);
-            long_running_test(url, false).await?;
-        }
-        SendCommands::LongRunningTestTest => {
-            let url = format!("http://{}:{}/", args.host, args.port);
-            info!("Starting long running test with 'test' verifier on {}", url);
-            long_running_test(url, true).await?;
+            long_running_test(url).await?;
         }
     }
 

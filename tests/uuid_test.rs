@@ -3,7 +3,7 @@ use std::ops::Deref;
 
 use client_sdk::{
     contract_states,
-    helpers::risc0::Risc0Prover,
+    helpers::TestProver,
     rest_client::NodeApiClient,
     transaction_builder::{ProvableBlobTx, TxExecutorBuilder, TxExecutorHandler},
 };
@@ -13,12 +13,12 @@ use hydentity::{
     client::tx_executor_handler::{register_identity, verify_identity},
     Hydentity,
 };
-// use hyli::mempool::verifiers::verify_proof;
+use hyli::mempool::verifiers::verify_proof;
 use hyli_contract_sdk::{
     BlobTransaction, Calldata, ContractName, Hashed, HyliOutput, ProgramId, StateCommitment,
     Verifier, ZkContract,
 };
-use hyli_contracts::{HYDENTITY_ELF, HYDENTITY_ID, UUID_TLD_ELF, UUID_TLD_ID};
+use hyli_contracts::UUID_TLD_ID;
 use hyli_model::{OnchainEffect, RegisterContractAction};
 use uuid_tld::{UuidTld, UuidTldAction};
 
@@ -34,7 +34,7 @@ mod fixtures;
 struct UuidContract {}
 impl E2EContract for UuidContract {
     fn verifier() -> Verifier {
-        Verifier(hyli_model::verifiers::RISC0_3.to_string())
+        "test".into()
     }
     fn program_id() -> ProgramId {
         ProgramId(UUID_TLD_ID.to_vec())
@@ -44,7 +44,6 @@ impl E2EContract for UuidContract {
     }
 }
 
-#[ignore = "will be enabled back in #1993"]
 #[test_log::test(tokio::test)]
 async fn test_uuid_registration() {
     std::env::set_var("RISC0_DEV_MODE", "1");
@@ -66,11 +65,11 @@ async fn test_uuid_registration() {
     })
     .with_prover(
         "hydentity".into(),
-        Risc0Prover::new(HYDENTITY_ELF.to_vec(), HYDENTITY_ID),
+        TestProver::<Hydentity>::new(&hydentity::client::tx_executor_handler::metadata::PROGRAM_ID),
     )
     .with_prover(
         "uuid".into(),
-        Risc0Prover::new(UUID_TLD_ELF.to_vec(), UUID_TLD_ID),
+        TestProver::<UuidTld>::new(&uuid_tld::client::tx_executor_handler::metadata::PROGRAM_ID),
     )
     .build();
 
@@ -160,24 +159,24 @@ async fn test_uuid_registration() {
 
     ctx.send_proof_single(uuid_proof.clone()).await.unwrap();
 
-    // let proof_verifiers = hyli::verifier_workers::ProofVerifierService::from_config(
-    //     &hyli::utils::conf::VerifierWorkersConf {
-    //         enabled: false,
-    //         ..Default::default()
-    //     },
-    // )
-    // .await
-    // .unwrap();
-    // let outputs = verify_proof(
-    //     &proof_verifiers,
-    //     &uuid_proof.proof,
-    //     &Verifier(hyli_model::verifiers::RISC0_3.to_string()),
-    //     &ProgramId(UUID_TLD_ID.to_vec()),
-    // )
-    // .await
-    // .expect("Must validate proof");
-    //
-    // assert_eq!(outputs, std::slice::from_ref(&expected_output));
+    let proof_verifiers = hyli::verifier_workers::ProofVerifierService::from_config(
+        &hyli::utils::conf::VerifierWorkersConf {
+            enabled: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let outputs = verify_proof(
+        &proof_verifiers,
+        &uuid_proof.proof,
+        &"test".into(),
+        &ProgramId(UUID_TLD_ID.to_vec()),
+    )
+    .await
+    .expect("Must validate proof");
+
+    assert_eq!(outputs, std::slice::from_ref(&expected_output));
 
     let contract = loop {
         if let Ok(c) = ctx

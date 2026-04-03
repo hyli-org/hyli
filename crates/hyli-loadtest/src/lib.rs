@@ -1,8 +1,8 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use client_sdk::helpers::risc0::Risc0Prover;
-use client_sdk::helpers::test::{MockProver, TxExecutorTestProver};
+use client_sdk::helpers::test::MockProver;
+use client_sdk::helpers::TestProver;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use client_sdk::tcp_client::{TcpApiClient, TcpServerMessage};
 use client_sdk::transaction_builder::{
@@ -16,7 +16,6 @@ use hyli_contract_sdk::{
     Identity, RegisterContractAction, StateCommitment, TimeoutWindow, Transaction, TxHash,
     ZkContract,
 };
-use hyli_contracts::{HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
 use hyllar::client::tx_executor_handler::transfer;
 use hyllar::erc20::ERC20;
 use hyllar::{Hyllar, FAUCET_ID};
@@ -441,7 +440,7 @@ pub async fn send_transaction<S: StateUpdater>(
     tx_hash
 }
 
-pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Result<()> {
+pub async fn long_running_test(node_url: String) -> Result<()> {
     let mut client = NodeApiHttpClient::new(node_url.clone())?;
     client.api_key = Some("KEY_LOADTEST".to_string());
 
@@ -450,10 +449,7 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
     let random_hyllar_contract: ContractName = format!("hyllar_{rand}").into();
     let random_hydentity_contract: ContractName = format!("hydentity_{rand}").into();
 
-    let verifier = match use_test_verifier {
-        true => hyli_contract_sdk::Verifier("test".to_string()),
-        false => hyli_contract_sdk::Verifier("risc0-3".to_string()),
-    };
+    let verifier = hyli_contract_sdk::Verifier("test".to_string());
 
     let tx = BlobTransaction::new(
         Identity::new("hyli@hyli"),
@@ -488,28 +484,17 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
         hyllar: Hyllar::custom(format!("faucet@{random_hydentity_contract}")),
         hyllar_name: random_hyllar_contract.clone(),
     });
-    if use_test_verifier {
-        tx_ctx = tx_ctx
-            .with_prover(
-                random_hydentity_contract.clone(),
-                TxExecutorTestProver::<Hyllar>::new(),
-            )
-            .with_prover(
-                random_hyllar_contract.clone(),
-                TxExecutorTestProver::<Hyllar>::new(),
-            );
-    } else {
-        // Replace prover binaries for non-reproducible mode.
-        tx_ctx = tx_ctx
-            .with_prover(
-                random_hydentity_contract.clone(),
-                Risc0Prover::new(HYDENTITY_ELF.to_vec(), HYDENTITY_ID),
-            )
-            .with_prover(
-                random_hyllar_contract.clone(),
-                Risc0Prover::new(HYLLAR_ELF.to_vec(), HYLLAR_ID),
-            );
-    }
+    tx_ctx = tx_ctx
+        .with_prover(
+            random_hydentity_contract.clone(),
+            TestProver::<Hydentity>::new(
+                &hydentity::client::tx_executor_handler::metadata::PROGRAM_ID,
+            ),
+        )
+        .with_prover(
+            random_hyllar_contract.clone(),
+            TestProver::<Hyllar>::new(&hyllar::client::tx_executor_handler::metadata::PROGRAM_ID),
+        );
     let mut tx_ctx = tx_ctx.build();
 
     let faucet_ident = Identity(format!("faucet@{}", random_hydentity_contract.0));

@@ -10,7 +10,7 @@ use hyli_net::http::HttpClient;
 use sdk::{
     api::{
         APIBlob, APIBlock, APIContract, APINodeContract, APIRegisterContract, APIStaking,
-        APITransaction, NodeInfo, TransactionStatusDb, TransactionWithBlobs,
+        APITransaction, APITransactionEvents, NodeInfo, TransactionStatusDb, TransactionWithBlobs,
     },
     BlobIndex, BlobTransaction, BlockHash, BlockHeight, ConsensusInfo, Contract, ContractName,
     ProofTransaction, TxHash, TxId, UnsettledBlobTransaction, ValidatorPublicKey,
@@ -144,6 +144,16 @@ impl IndexerApiHttpClient {
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get_transaction_with_hash(&self, tx_hash: &TxHash) -> Result<APITransaction> {
         self.get(&format!("v1/indexer/transaction/hash/{tx_hash}"))
+            .await
+            .context(format!("getting transaction with hash {tx_hash}"))
+    }
+
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    pub async fn get_transaction_events(
+        &self,
+        tx_hash: &TxHash,
+    ) -> Result<Vec<APITransactionEvents>> {
+        self.get(&format!("v1/indexer/transaction/hash/{tx_hash}/events"))
             .await
             .context(format!("getting transaction with hash {tx_hash}"))
     }

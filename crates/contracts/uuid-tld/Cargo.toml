@@ -19,13 +19,12 @@ sdk = { workspace = true }
 borsh = { workspace = true }
 
 risc0-zkvm = { workspace = true, optional = true, features = ['std'] }
-client-sdk = { workspace = true, features = ["risc0"], optional = true }
+client-sdk = { workspace = true, optional = true }
 uuid = { workspace = true }
 rand = { workspace = true }
 rand_seeder = { workspace = true }
 
 [dev-dependencies]
-risc0-zkvm = { workspace = true, features = ['std'] }
 
 [features]
 default = []

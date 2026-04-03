@@ -1,16 +1,18 @@
 use anyhow::{Context, Result};
-use client_sdk::{
-    helpers::risc0::Risc0Prover,
-    transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutorBuilder, TxExecutorHandler},
+use client_sdk::transaction_builder::{
+    ProvableBlobTx, StateUpdater, TxExecutorBuilder, TxExecutorHandler,
 };
 use sdk::{utils::as_hyli_output, Calldata, ContractName, StateCommitment, ZkContract};
 
+#[cfg(not(feature = "risc0"))]
+use crate::client::tx_executor_handler::metadata::PROGRAM_ID;
 use crate::{Hyllar, HyllarAction};
 
 pub mod metadata {
     pub const HYLLAR_ELF: &[u8] = include_bytes!("../../hyllar.img");
     pub const PROGRAM_ID: [u8; 32] = sdk::str_to_u8(include_str!("../../hyllar.txt"));
 }
+#[cfg(feature = "risc0")]
 use metadata::*;
 
 impl TxExecutorHandler for Hyllar {
@@ -51,10 +53,11 @@ impl Hyllar {
         contract_name: ContractName,
         builder: &mut TxExecutorBuilder<S>,
     ) {
-        builder.init_with(
-            contract_name,
-            Risc0Prover::new(HYLLAR_ELF.to_vec(), PROGRAM_ID),
-        );
+        #[cfg(feature = "risc0")]
+        let prover = client_sdk::helpers::risc0::Risc0Prover::new(HYLLAR_ELF.to_vec(), PROGRAM_ID);
+        #[cfg(not(feature = "risc0"))]
+        let prover = client_sdk::helpers::TestProver::<Hyllar>::new(&PROGRAM_ID);
+        builder.init_with(contract_name, prover);
     }
 }
 

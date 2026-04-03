@@ -19,4 +19,4 @@ retries = 2
 # the string "num-cpus". Can be overridden through the `--test-threads` option.
 test-threads = "num-cpus"
 
-slow-timeout = { period = "60s", terminate-after = 2 }
+slow-timeout = { period = "30s", terminate-after = 2 }

@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use client_sdk::{
-    contract_indexer::utoipa::OpenApi, helpers::test::TxExecutorTestProver,
-    rest_client::test::NodeApiMockClient,
+    contract_indexer::utoipa::OpenApi, helpers::TestProver, rest_client::test::NodeApiMockClient,
 };
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
@@ -196,21 +195,24 @@ async fn main() -> Result<()> {
     // As an example/feature, run a prover alongside the block debugger.
     #[allow(dead_code)]
     if false {
-        let prover = TxExecutorTestProver::<SmtTokenContract>::new();
+        let prover = TestProver::<SmtTokenContract>::default();
         let node_client = NodeApiMockClient::new();
         node_client.set_block_height(BlockHeight(4000));
         handler
-            .build_module::<AutoProver<SmtTokenProvableState, TxExecutorTestProver<SmtTokenContract>>>(Arc::new(AutoProverCtx {
-                data_directory: data_dir.clone(),
-                prover: Arc::new(prover),
-                contract_name: "oranj".into(),
-                node: Arc::new(node_client),
-                api: None,
-                tx_buffer_size: 0,
-                max_txs_per_proof: 40,
-                tx_working_window_size: 180,
-                idle_flush_interval: Duration::from_secs(5),
-        })).await?;
+            .build_module::<AutoProver<SmtTokenProvableState, TestProver<SmtTokenContract>>>(
+                Arc::new(AutoProverCtx {
+                    data_directory: data_dir.clone(),
+                    prover: Arc::new(prover),
+                    contract_name: "oranj".into(),
+                    node: Arc::new(node_client),
+                    api: None,
+                    tx_buffer_size: 0,
+                    max_txs_per_proof: 40,
+                    tx_working_window_size: 180,
+                    idle_flush_interval: Duration::from_secs(5),
+                }),
+            )
+            .await?;
 
         let build_api_ctx = Arc::new(BuildApiContextInner {
             router: Mutex::new(Some(Router::new())),

@@ -3,7 +3,7 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use client_sdk::helpers::risc0::Risc0Prover;
+use client_sdk::helpers::TestProver;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use client_sdk::transaction_builder::ProvableBlobTx;
 use hyli_contract_sdk::{BlobTransaction, ContractName, Identity, RegisterContractAction};
@@ -24,7 +24,7 @@ use smt_token::client::tx_executor_handler::{
 };
 use smt_token::{
     account::{Account, AccountSMT},
-    SmtTokenAction,
+    SmtTokenAction, SmtTokenContract,
 };
 
 const BOOTSTRAP_CONTRACT_FILE: &str = "smt_long_running_test_contract_name.txt";
@@ -121,7 +121,7 @@ impl ContractBootstrap {
                 vec![
                     RegisterContractAction {
                         contract_name: contract_name.clone(),
-                        verifier: "risc0-3".into(),
+                        verifier: "test".into(),
                         program_id: SMT_TOKEN_PROGRAM_ID.to_vec().into(),
                         state_commitment: smt_state_commitment(&initial_state),
                         constructor_metadata: Some(constructor_metadata.clone()),
@@ -388,9 +388,8 @@ async fn main() -> Result<()> {
 
     let auto_prover_ctx = Arc::new(AutoProverCtx {
         data_directory: config.data_directory.clone(),
-        prover: Arc::new(Risc0Prover::new(
-            smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF.to_vec(),
-            smt_token::client::tx_executor_handler::metadata::PROGRAM_ID,
+        prover: Arc::new(TestProver::<SmtTokenContract>::new(
+            &smt_token::client::tx_executor_handler::metadata::PROGRAM_ID,
         )),
         contract_name: bootstrap.contract_name.clone(),
         node: prover_node,
@@ -402,7 +401,9 @@ async fn main() -> Result<()> {
     });
 
     handler
-        .build_module::<AutoProver<SmtTokenProvableState, Risc0Prover>>(auto_prover_ctx)
+        .build_module::<AutoProver<SmtTokenProvableState, TestProver<SmtTokenContract>>>(
+            auto_prover_ctx,
+        )
         .await
         .context("build auto prover module")?;
 

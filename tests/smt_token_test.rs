@@ -9,7 +9,7 @@ use anyhow::Result;
 mod e2e_smt_token {
     use client_sdk::{
         contract_states,
-        helpers::risc0::Risc0Prover,
+        helpers::TestProver,
         rest_client::NodeApiClient,
         transaction_builder::{ProvableBlobTx, TxExecutorBuilder, TxExecutorHandler},
     };
@@ -18,7 +18,7 @@ mod e2e_smt_token {
         Hydentity,
     };
     use hyli_contract_sdk::{Calldata, ContractName, HyliOutput};
-    use hyli_contracts::{HYDENTITY_ELF, HYDENTITY_ID, SMT_TOKEN_ELF, SMT_TOKEN_ID};
+    use smt_token::SmtTokenContract;
     use smt_token::{client::tx_executor_handler::SmtTokenProvableState, FAUCET_ID};
 
     use super::*;
@@ -48,11 +48,15 @@ mod e2e_smt_token {
             // Replace prover binaries for non-reproducible mode.
             .with_prover(
                 "hydentity".into(),
-                Risc0Prover::new(HYDENTITY_ELF.to_vec(), HYDENTITY_ID),
+                TestProver::<Hydentity>::new(
+                    &hydentity::client::tx_executor_handler::metadata::PROGRAM_ID,
+                ),
             )
             .with_prover(
                 "oranj".into(),
-                Risc0Prover::new(SMT_TOKEN_ELF.to_vec(), SMT_TOKEN_ID),
+                TestProver::<SmtTokenContract>::new(
+                    &smt_token::client::tx_executor_handler::metadata::PROGRAM_ID,
+                ),
             )
             .build();
 

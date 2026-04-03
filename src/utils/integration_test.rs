@@ -209,16 +209,25 @@ impl Drop for NodeIntegrationCtx {
             return;
         };
         let _ = shutdown_tx.send(());
-        let start_time = std::time::Instant::now();
-        loop {
-            if node_task.is_finished() {
-                break;
+        info!("Node shutdown requested");
+        // Use block_in_place to avoid blocking a tokio worker thread while waiting,
+        // which would starve the runtime and prevent the node task from completing.
+        // After a grace period, abort the task rather than panicking: the test logic
+        // has already completed, and panicking in Drop triggers secondary panics in tokio.
+        tokio::task::block_in_place(|| {
+            let start_time = std::time::Instant::now();
+            loop {
+                if node_task.is_finished() {
+                    break;
+                }
+                if start_time.elapsed().as_secs() > 5 {
+                    tracing::warn!("Node shutdown took too long, aborting task");
+                    node_task.abort();
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
             }
-            if start_time.elapsed().as_secs() > 5 {
-                panic!("Node shutdown took too long - you probably need a multi-threaded tokio runtime");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
+        });
         info!("Node shutdown complete");
     }
 }

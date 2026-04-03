@@ -1,10 +1,7 @@
-use crate::{client::tx_executor_handler::metadata::PROGRAM_ID, UuidTld};
-use client_sdk::{
-    helpers::risc0::Risc0Prover,
-    transaction_builder::{
-        StateUpdater, TxExecutorBuilder, TxExecutorHandler, TxExecutorHandlerContext,
-        TxExecutorHandlerResult,
-    },
+use crate::UuidTld;
+use client_sdk::transaction_builder::{
+    StateUpdater, TxExecutorBuilder, TxExecutorHandler, TxExecutorHandlerContext,
+    TxExecutorHandlerResult,
 };
 use sdk::{utils::as_hyli_output, Calldata, ContractName, StateCommitment, ZkContract};
 
@@ -19,10 +16,14 @@ impl UuidTld {
         contract_name: ContractName,
         builder: &mut TxExecutorBuilder<S>,
     ) {
-        builder.init_with(
-            contract_name,
-            Risc0Prover::new(metadata::UUID_TLD_ELF.to_vec(), PROGRAM_ID),
+        #[cfg(feature = "risc0")]
+        let prover = client_sdk::helpers::risc0::Risc0Prover::new(
+            metadata::UUID_TLD_ELF.to_vec(),
+            metadata::PROGRAM_ID,
         );
+        #[cfg(not(feature = "risc0"))]
+        let prover = client_sdk::helpers::TestProver::<UuidTld>::new(&metadata::PROGRAM_ID);
+        builder.init_with(contract_name, prover);
     }
 }
 

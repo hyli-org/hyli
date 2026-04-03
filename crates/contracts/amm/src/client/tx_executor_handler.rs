@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
-use client_sdk::{
-    helpers::risc0::Risc0Prover,
-    transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutorBuilder, TxExecutorHandler},
+use client_sdk::transaction_builder::{
+    ProvableBlobTx, StateUpdater, TxExecutorBuilder, TxExecutorHandler,
 };
 use hyllar::HyllarAction;
 use sdk::{utils::as_hyli_output, BlobIndex, Calldata, ContractName, StateCommitment, ZkContract};
@@ -12,7 +11,6 @@ pub mod metadata {
     pub const AMM_ELF: &[u8] = include_bytes!("../../amm.img");
     pub const PROGRAM_ID: [u8; 32] = sdk::str_to_u8(include_str!("../../amm.txt"));
 }
-use metadata::*;
 
 impl TxExecutorHandler for Amm {
     type Contract = Amm;
@@ -52,10 +50,14 @@ impl Amm {
         contract_name: ContractName,
         builder: &mut TxExecutorBuilder<S>,
     ) {
-        builder.init_with(
-            contract_name,
-            Risc0Prover::new(AMM_ELF.to_vec(), PROGRAM_ID),
+        #[cfg(feature = "risc0")]
+        let prover = client_sdk::helpers::risc0::Risc0Prover::new(
+            metadata::AMM_ELF.to_vec(),
+            metadata::PROGRAM_ID,
         );
+        #[cfg(not(feature = "risc0"))]
+        let prover = client_sdk::helpers::TestProver::<Amm>::new(&metadata::PROGRAM_ID);
+        builder.init_with(contract_name, prover);
     }
 }
 

@@ -238,18 +238,20 @@ impl TxExecutorHandler for SmtTokenProvableState {
 }
 
 impl SmtTokenProvableState {
-    #[cfg(feature = "risc0")]
     pub fn setup_builder<S: client_sdk::transaction_builder::StateUpdater>(
         &self,
         contract_name: ContractName,
         builder: &mut client_sdk::transaction_builder::TxExecutorBuilder<S>,
     ) {
-        use metadata::*;
-
-        builder.init_with(
-            contract_name,
-            client_sdk::helpers::risc0::Risc0Prover::new(SMT_TOKEN_ELF.to_vec(), PROGRAM_ID),
+        #[cfg(feature = "risc0")]
+        let prover = client_sdk::helpers::risc0::Risc0Prover::new(
+            metadata::SMT_TOKEN_ELF.to_vec(),
+            metadata::PROGRAM_ID,
         );
+        #[cfg(not(feature = "risc0"))]
+        let prover =
+            client_sdk::helpers::TestProver::<SmtTokenContract>::new(&metadata::PROGRAM_ID);
+        builder.init_with(contract_name, prover);
     }
 
     pub fn transfer(

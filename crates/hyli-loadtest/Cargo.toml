@@ -17,7 +17,7 @@ smt-token = { workspace = true, features = ["client"] }
 hyli-contracts = { workspace = true }
 hyli-contract-sdk = { workspace = true, features = ["tracing"] }
 hyli-modules = { workspace = true, features = ["db"] }
-client-sdk = { workspace = true, features = ["rest", "risc0"] }
+client-sdk = { workspace = true, features = ["rest"] }
 anyhow = { workspace = true }
 borsh = { workspace = true }
 clap = { workspace = true }

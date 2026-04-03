@@ -22,7 +22,7 @@ anyhow = { workspace = true }
 borsh = { workspace = true, features = ["derive"] }
 
 risc0-zkvm = { workspace = true, optional = true, features = ['std'] }
-client-sdk = { workspace = true, features = ["risc0"], optional = true }
+client-sdk = { workspace = true, optional = true }
 
 [features]
 default = []

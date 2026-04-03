@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use client_sdk::{
-    helpers::risc0::Risc0Prover,
+    helpers::TestProver,
     rest_client::{NodeApiClient, NodeApiHttpClient},
     transaction_builder::{ProvableBlobTx, TxExecutorBuilder},
 };
@@ -12,7 +12,6 @@ use hydentity::{
     Hydentity,
 };
 use hyli::genesis::States;
-use hyli_contracts::{HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID, STAKING_ELF, STAKING_ID};
 use hyli_model::{api::APIRegisterContract, ContractName, Identity, ProgramId, StateCommitment};
 use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
 use staking::{
@@ -48,15 +47,17 @@ async fn faucet_and_delegate(
         // Replace prover binaries for non-reproducible mode.
         .with_prover(
             "hydentity".into(),
-            Risc0Prover::new(HYDENTITY_ELF.to_vec(), HYDENTITY_ID),
+            TestProver::<Hydentity>::new(
+                &hydentity::client::tx_executor_handler::metadata::PROGRAM_ID,
+            ),
         )
         .with_prover(
             "hyllar".into(),
-            Risc0Prover::new(HYLLAR_ELF.to_vec(), HYLLAR_ID),
+            TestProver::<Hyllar>::new(&hyllar::client::tx_executor_handler::metadata::PROGRAM_ID),
         )
         .with_prover(
             "staking".into(),
-            Risc0Prover::new(STAKING_ELF.to_vec(), STAKING_ID),
+            TestProver::<Staking>::new(&staking::client::tx_executor_handler::metadata::PROGRAM_ID),
         )
         .build();
 
@@ -202,14 +203,12 @@ async fn scenario_lane_manager_outside_consensus(mut ctx: E2ECtx, delegate: bool
     Ok(())
 }
 
-#[ignore = "will be enabled back in #1993"]
 #[test_log::test(tokio::test)]
 async fn lane_manager_outside_consensus_single_node() -> Result<()> {
     let ctx = E2ECtx::new_single_with_indexer(500).await?;
     scenario_lane_manager_outside_consensus(ctx, false).await
 }
 
-#[ignore = "will be enabled back in #1993"]
 #[test_log::test(tokio::test)]
 async fn lane_manager_outside_consensus_multi_node() -> Result<()> {
     let ctx = E2ECtx::new_multi_with_indexer(2, 500).await?;
