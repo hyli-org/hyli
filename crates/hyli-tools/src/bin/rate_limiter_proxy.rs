@@ -33,20 +33,22 @@ fn extract_client_ip<B>(req: &Request<B>) -> String {
     // Check X-Forwarded-For first (may contain comma-separated list)
     if let Some(val) = req.headers().get("x-forwarded-for")
         && let Ok(s) = val.to_str()
-            && let Some(first) = s.split(',').next() {
-                let ip = first.trim();
-                if !ip.is_empty() {
-                    return ip.to_string();
-                }
-            }
+        && let Some(first) = s.split(',').next()
+    {
+        let ip = first.trim();
+        if !ip.is_empty() {
+            return ip.to_string();
+        }
+    }
     // Then X-Real-Ip
     if let Some(val) = req.headers().get("x-real-ip")
-        && let Ok(s) = val.to_str() {
-            let ip = s.trim();
-            if !ip.is_empty() {
-                return ip.to_string();
-            }
+        && let Ok(s) = val.to_str()
+    {
+        let ip = s.trim();
+        if !ip.is_empty() {
+            return ip.to_string();
         }
+    }
     "unknown".to_string()
 }
 
