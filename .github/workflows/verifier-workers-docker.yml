@@ -1,0 +1,117 @@
+name: Verifier worker images
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "crates/sp1/**"
+      - "crates/risc0/**"
+      - "crates/jolt/**"
+      - "crates/reth/**"
+      - "crates/verifier-worker/**"
+      - "Cargo.lock"
+      - ".github/docker/Dockerfile.*-verifier"
+      - ".github/workflows/verifier-workers-docker.yml"
+  workflow_dispatch:
+    inputs:
+      verifiers:
+        description: "Comma-separated list of verifiers to build (sp1,risc0,jolt,reth). Leave empty to build all."
+        required: false
+        default: ""
+
+env:
+  AR_REPO_LOCATION: "europe-west1-docker.pkg.dev"
+
+jobs:
+  detect_changes:
+    if: ${{ github.actor != 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    outputs:
+      sp1: ${{ steps.changes.outputs.sp1 }}
+      risc0: ${{ steps.changes.outputs.risc0 }}
+      jolt: ${{ steps.changes.outputs.jolt }}
+      reth: ${{ steps.changes.outputs.reth }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect changes
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            INPUT="${{ github.event.inputs.verifiers }}"
+            if [ -z "$INPUT" ]; then
+              echo "sp1=true" >> "$GITHUB_OUTPUT"
+              echo "risc0=true" >> "$GITHUB_OUTPUT"
+              echo "jolt=true" >> "$GITHUB_OUTPUT"
+              echo "reth=true" >> "$GITHUB_OUTPUT"
+            else
+              for v in sp1 risc0 jolt reth; do
+                if echo "$INPUT" | grep -q "$v"; then
+                  echo "$v=true" >> "$GITHUB_OUTPUT"
+                else
+                  echo "$v=false" >> "$GITHUB_OUTPUT"
+                fi
+              done
+            fi
+          else
+            # For push events, detect which files changed
+            CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+            SHARED=false
+            if echo "$CHANGED" | grep -qE "^(Cargo\.lock|crates/verifier-worker/|\.github/workflows/verifier-workers-docker\.yml)"; then
+              SHARED=true
+            fi
+
+            for v in sp1 risc0 jolt reth; do
+              if [ "$SHARED" = "true" ] || echo "$CHANGED" | grep -qE "^crates/$v/" || echo "$CHANGED" | grep -qE "^\.github/docker/Dockerfile\.$v-verifier"; then
+                echo "$v=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "$v=false" >> "$GITHUB_OUTPUT"
+              fi
+            done
+          fi
+
+  build_sp1:
+    needs: detect_changes
+    if: ${{ needs.detect_changes.outputs.sp1 == 'true' }}
+    uses: ./.github/workflows/build-verifier.yml
+    with:
+      verifier: sp1
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+
+  build_risc0:
+    needs: detect_changes
+    if: ${{ needs.detect_changes.outputs.risc0 == 'true' }}
+    uses: ./.github/workflows/build-verifier.yml
+    with:
+      verifier: risc0
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+
+  build_jolt:
+    needs: detect_changes
+    if: ${{ needs.detect_changes.outputs.jolt == 'true' }}
+    uses: ./.github/workflows/build-verifier.yml
+    with:
+      verifier: jolt
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+
+  build_reth:
+    needs: detect_changes
+    if: ${{ needs.detect_changes.outputs.reth == 'true' }}
+    uses: ./.github/workflows/build-verifier.yml
+    with:
+      verifier: reth
+    permissions:
+      contents: read
+      id-token: write
+      packages: write

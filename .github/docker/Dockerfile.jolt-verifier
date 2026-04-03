@@ -1,0 +1,14 @@
+ARG DEP_IMAGE=rust:bookworm
+
+FROM ${DEP_IMAGE} AS builder
+
+WORKDIR /usr/src/hyli
+
+COPY Cargo.toml Cargo.lock ./
+COPY .cargo/config.toml .cargo/config.toml
+COPY src ./src
+COPY crates ./crates
+RUN cargo build --release -p hyli-jolt-verifier-worker
+
+FROM scratch
+COPY --from=builder /usr/src/hyli/target/release/hyli-jolt-verifier /hyli-jolt-verifier
