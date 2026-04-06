@@ -963,9 +963,6 @@ impl Consensus {
 }
 
 #[cfg(test)]
-impl Consensus {}
-
-#[cfg(test)]
 pub mod test {
 
     use crate::{
