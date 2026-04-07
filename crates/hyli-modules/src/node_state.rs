@@ -207,6 +207,11 @@ pub enum TxError {
         contract_name: ContractName,
         message: String,
     },
+
+    /// Blob transaction was rejected during initial processing
+    BlobTransactionRejected {
+        message: String,
+    },
 }
 
 impl std::fmt::Display for TxError {
@@ -228,6 +233,7 @@ impl std::fmt::Display for TxError {
             TxError::OnChainExecutionFailed { blob_index, message } => write!(f, "On-chain execution failed for blob {blob_index}: {message}"),
             TxError::InvalidBlobProofOutput { proof_index, blob_index, contract_name, message } => write!(f, "Could not settle blob proof output #{proof_index} on blob {blob_index} for contract '{contract_name}': {message}"),
             TxError::FatalBlobProofError { proof_index, blob_index, contract_name, message } => write!(f, "Fatal error processing blob proof output #{proof_index} on blob {blob_index} for contract '{contract_name}': {message}"),
+            TxError::BlobTransactionRejected { message } => write!(f, "Blob transaction rejected: {message}"),
         }
     }
 }
@@ -242,6 +248,7 @@ pub enum TxEvent<'a> {
         u32,
         &'a BlobTransaction,
         &'a Arc<TxContext>,
+        TxError,
     ),
     DuplicateBlobTransaction(&'a TxId),
     SequencedBlobTransaction(
@@ -504,14 +511,16 @@ impl<'any> NodeStateProcessing<'any> {
                             ));
                         }
                         Err(e) => {
-                            let err = format!("Failed to handle blob transaction: {e:?}");
-                            error!(tx_hash = %tx_id.1, "{err}");
+                            error!(tx_hash = %tx_id.1, "Failed to handle blob transaction: {e:?}");
                             self.callback.on_event(&TxEvent::RejectedBlobTransaction(
                                 &tx_id,
                                 &lane_id,
                                 i as u32,
                                 blob_transaction,
                                 tx_context,
+                                TxError::BlobTransactionRejected {
+                                    message: format!("{e:#}"),
+                                },
                             ));
                         }
                     }

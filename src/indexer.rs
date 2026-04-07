@@ -810,7 +810,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                 return;
             }
             TxEvent::SequencedBlobTransaction(tx_id, lane_id, index, blob_tx, _tx_context)
-            | TxEvent::RejectedBlobTransaction(tx_id, lane_id, index, blob_tx, _tx_context) => {
+            | TxEvent::RejectedBlobTransaction(tx_id, lane_id, index, blob_tx, _tx_context, _) => {
                 self.tx_index_map.insert(tx_id.clone(), index as i32);
                 self.merge_tx(
                     tx_id.clone(),
@@ -1532,14 +1532,24 @@ fn contract_update_row_bytes(row: &ContractUpdateRow) -> usize {
 
 fn tx_event_json_for_db(event: &TxEvent<'_>) -> serde_json::Value {
     match event {
-        TxEvent::RejectedBlobTransaction(tx_id, lane_id, index, blob_tx, tx_context)
-        | TxEvent::SequencedBlobTransaction(tx_id, lane_id, index, blob_tx, tx_context) => {
-            let event_type = match event {
-                TxEvent::RejectedBlobTransaction(..) => "RejectedBlobTransaction",
-                _ => "SequencedBlobTransaction",
-            };
+        TxEvent::RejectedBlobTransaction(tx_id, lane_id, _index, blob_tx, tx_context, reason) => {
             serde_json::json!({
-                "type": event_type,
+                "type": "RejectedBlobTransaction",
+                "tx_id": tx_id,
+                "lane_id": lane_id,
+                "reason": reason,
+                "identity": blob_tx.identity,
+                "blob_count": blob_tx.blobs.len(),
+                "blobs": blob_tx.blobs.iter().map(|blob| serde_json::json!({
+                    "contract_name": blob.contract_name,
+                    "data_len": blob.data.0.len(),
+                })).collect::<Vec<_>>(),
+                "tx_context": tx_context,
+            })
+        }
+        TxEvent::SequencedBlobTransaction(tx_id, lane_id, index, blob_tx, tx_context) => {
+            serde_json::json!({
+                "type": "SequencedBlobTransaction",
                 "tx_id": tx_id,
                 "lane_id": lane_id,
                 "index": index,
