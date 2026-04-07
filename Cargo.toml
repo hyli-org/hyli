@@ -135,15 +135,15 @@ k256 = { version = "0.13", default-features = false, features = [
 ] }
 mockall = { version = "0.14.0", default-features = false }
 once_cell = { version = "1.19.0", default-features = false }
-opentelemetry = { version = "0.28.0" }
-opentelemetry-prometheus = { version = "0.28.0" }
-opentelemetry_sdk = { version = "0.28.0" }
-opentelemetry-otlp = { version = "0.28.0", features = [
+opentelemetry = { version = "0.29.0" }
+opentelemetry-prometheus = { version = "0.29.0" }
+opentelemetry_sdk = { version = "0.29.0" }
+opentelemetry-otlp = { version = "0.29.0", features = [
   "grpc-tonic",
   "trace",
   "metrics",
 ] }
-opentelemetry-http = { version = "0.28" }
+opentelemetry-http = { version = "0.29" }
 paste = { version = "1.0.15", default-features = false }
 prometheus = { version = "0.13.4" }
 quote = { version = "1.0.42", default-features = false }
@@ -166,12 +166,12 @@ sp1-sdk = { version = "5.2.2", default-features = false }
 sp1-zkvm = { version = "5.2.2", default-features = false }
 sparse-merkle-tree = { version = "0.6.1", default-features = false }
 sqlx = { version = "0.8.6" }
-strum = { version = "0.27.1" }
+strum = { version = "0.28.0" }
 strum_macros = { version = "0.28.0", default-features = false }
 syn = { version = "2.0.104" }
 tempfile = { version = "3.20.0", default-features = false }
 test-log = { version = "0.2.18", default-features = false }
-tracing-opentelemetry = "0.29.0"
+tracing-opentelemetry = "0.30.0"
 tokio = { version = "1.50.0" }
 tokio-util = { version = "0.7.16" }
 toml = { version = "0.9.11", default-features = false }
@@ -179,7 +179,6 @@ tower-http = { version = "0.6.5", default-features = false, features = [
   "decompression-gzip",
 ] }
 tower-service = { version = "0.3.3", default-features = false }
-tower_governor = { version = "0.8" }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3.19", default-features = false }
 turmoil = { version = "0.7" }
