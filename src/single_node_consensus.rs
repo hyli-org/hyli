@@ -220,9 +220,10 @@ impl SingleNodeConsensus {
         self.store.last_timestamp = consensus_proposal.timestamp.clone();
         self.store.last_consensus_proposal_hash = consensus_proposal.hashed();
 
-        let certificate = self
-            .crypto
-            .sign_aggregate((consensus_proposal.hashed(), ConfirmAckMarker), &[])?;
+        let certificate = self.crypto.sign_aggregate(
+            (consensus_proposal.hashed(), ConfirmAckMarker),
+            std::iter::empty(),
+        )?;
 
         self.bus.send(ConsensusEvent::CommitConsensusProposal(
             CommittedConsensusProposal {

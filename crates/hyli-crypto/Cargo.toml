@@ -24,6 +24,10 @@ keyring = { workspace = true, features = [
 ], optional = true }
 whoami = { workspace = true, optional = true }
 
+[[bench]]
+name = "aggregate_allocations"
+harness = false
+
 [features]
 default = []
 

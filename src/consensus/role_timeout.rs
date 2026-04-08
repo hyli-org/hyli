@@ -222,7 +222,6 @@ impl Consensus {
         self.on_timeout(timeout.clone(), kind.clone())?;
 
         self.broadcast_net_message((timeout, kind).into())?;
-
         Ok(())
     }
 
@@ -339,29 +338,16 @@ impl Consensus {
 
         let f = self.bft_round_state.staking.compute_f();
 
-        let (mut len, mut voting_power) = {
-            let relevant_timeout_messages = self
-                .relevant_timeout_requests(*received_slot, *received_view)
-                .map(|(signed_message, _)| signed_message)
-                .collect::<Vec<_>>();
-
-            (
-                relevant_timeout_messages.len(),
-                self.store.bft_round_state.staking.compute_voting_power(
-                    &relevant_timeout_messages
-                        .iter()
-                        .map(|s| s.signature.validator.clone())
-                        .collect::<Vec<_>>(),
-                ),
-            )
-        };
+        let mut voting_power = self.store.bft_round_state.staking.compute_voting_power(
+            self.relevant_timeout_requests(*received_slot, *received_view)
+                .map(|(signed_message, _)| &signed_message.signature.validator),
+        );
         if self.is_in_timeout_phase() {
-            len += 1;
             voting_power += self.get_own_voting_power();
         }
 
         info!(
-            "Got {voting_power} voting power with {len} timeout requests for the slot {received_slot} view {received_view}. f is {f}",
+            "Got {voting_power} voting power for the slot {received_slot} view {received_view}. f is {f}",
         );
 
         // Count requests and if f+1 requests, and not already part of it, join the mutiny
@@ -379,7 +365,6 @@ impl Consensus {
                     self.bft_round_state.slot, self.bft_round_state.view,
                 ))?;
 
-            len += 1;
             voting_power += self.get_own_voting_power();
         }
 
@@ -390,14 +375,8 @@ impl Consensus {
                 TimeoutState::Certificate
             )
         {
-            debug!(
-                "⏲️ ⏲️ Creating a timeout certificate with {len} timeout requests and {voting_power} voting power"
-            );
+            debug!("⏲️ ⏲️ Creating a timeout certificate with {voting_power} voting power");
 
-            let relevant_timeout_message_refs = self
-                .relevant_timeout_requests(*received_slot, *received_view)
-                .map(|(signed_message, _)| signed_message)
-                .collect::<Vec<_>>();
             let tqc = QuorumCertificate(
                 self.crypto
                     .sign_aggregate(
@@ -407,7 +386,8 @@ impl Consensus {
                             self.bft_round_state.parent_hash.clone(),
                             ConsensusTimeoutMarker,
                         ),
-                        relevant_timeout_message_refs.as_slice(),
+                        self.relevant_timeout_requests(*received_slot, *received_view)
+                            .map(|(signed_message, _)| signed_message),
                     )?
                     .signature,
                 ConsensusTimeoutMarker,
@@ -446,13 +426,11 @@ impl Consensus {
                                     NilConsensusTimeoutMarker,
                                 ),
                                 self.relevant_timeout_requests(*received_slot, *received_view)
-                                    .map(|(_, tk)| tk)
-                                    .map(|tk| match tk {
+                                    .map(|(_, tk)| match tk {
                                         TimeoutKind::NilProposal(signed_nil) => Ok(signed_nil),
                                         _ => bail!("Expected NilProposal, got {:?}", tk),
                                     })
-                                    .collect::<Result<Vec<_>>>()?
-                                    .as_slice(),
+                                    .collect::<Result<Vec<_>>>()?,
                             )?
                             .signature,
                         NilConsensusTimeoutMarker,
@@ -468,7 +446,6 @@ impl Consensus {
                 ticket.0.clone(),
                 ticket.1.clone(),
             );
-
             let round_leader = self.next_view_leader()?;
             if &round_leader == self.crypto.validator_pubkey() {
                 // This TC is for our current slot and view (by construction), so we can leave Joining mode

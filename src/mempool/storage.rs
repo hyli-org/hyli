@@ -137,7 +137,7 @@ pub trait Storage {
 
             if let Some(cached_poda) = &le.cached_poda {
                 let cached_voting_power =
-                    staking.compute_voting_power(cached_poda.validators.as_slice());
+                    staking.compute_voting_power(cached_poda.validators.iter());
                 if cached_voting_power > f {
                     return Ok(Some((current, le.cumul_size, cached_poda.clone())));
                 }
@@ -162,7 +162,10 @@ pub trait Storage {
 
             // Enough votes: aggregate into PoDA and return.
             if voting_power > f {
-                match BlstCrypto::aggregate((current.clone(), le.cumul_size), &filtered) {
+                match BlstCrypto::aggregate(
+                    (current.clone(), le.cumul_size),
+                    filtered.iter().copied(),
+                ) {
                     Ok(poda) => {
                         return Ok(Some((current, le.cumul_size, poda.signature)));
                     }

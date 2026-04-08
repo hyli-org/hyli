@@ -415,7 +415,7 @@ impl Consensus {
             let voting_power = self
                 .bft_round_state
                 .staking
-                .compute_voting_power(poda_sig.validators.as_slice());
+                .compute_voting_power(poda_sig.validators.iter());
 
             // Check that this lane's operator is a known validator.
             // This does not validate the lane suffix.
@@ -1109,7 +1109,7 @@ mod tests {
         msg: T,
     ) -> AggregateSignature {
         let signed = crypto.sign(msg.clone()).expect("sign");
-        BlstCrypto::aggregate(msg, &[&signed])
+        BlstCrypto::aggregate(msg, std::iter::once(&signed))
             .expect("aggregate")
             .signature
     }

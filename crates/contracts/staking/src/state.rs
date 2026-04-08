@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use anyhow::Result;
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -80,15 +80,17 @@ impl Staking {
         self.total_bond().div_euclid(3)
     }
 
-    pub fn compute_voting_power(&self, validators: &[ValidatorPublicKey]) -> u128 {
-        // Deduplicate validators before computing voting power
-        let mut unique_validators = validators.to_vec();
-        unique_validators.sort();
-        unique_validators.dedup();
-        unique_validators
-            .iter()
-            .flat_map(|v| self.get_stake(v))
-            .sum::<u128>()
+    pub fn compute_voting_power<'a, I>(&self, validators: I) -> u128
+    where
+        I: IntoIterator<Item = &'a ValidatorPublicKey>,
+    {
+        let mut seen = HashSet::new();
+
+        validators
+            .into_iter()
+            .filter(|v| seen.insert(*v))
+            .filter_map(|v| self.get_stake(v))
+            .sum()
     }
 
     pub fn get_stake(&self, validator: &ValidatorPublicKey) -> Option<u128> {
