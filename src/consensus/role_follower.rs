@@ -209,25 +209,40 @@ impl Consensus {
 
         follower_state!(self).buffered_prepares.push((
             sender.clone(),
-            consensus_proposal,
-            ticket,
+            consensus_proposal.clone(),
+            ticket.clone(),
             view,
         ));
         self.record_prepare_cache_sizes();
 
-        // If we already have the next Prepare, fast-forward
-        if let Some(prepare) = follower_state!(self)
-            .buffered_prepares
-            .next_prepare(cp_hash.clone())
-        {
+        // Fast-forward through chained prepares iteratively instead of recursively.
+        // The recursive approach could cause a stack overflow with many chained prepares.
+        let mut sender = sender;
+        let mut consensus_proposal = consensus_proposal;
+        let mut ticket = ticket;
+        let mut view = view;
+        loop {
+            let Some(prepare) = follower_state!(self)
+                .buffered_prepares
+                .next_prepare(cp_hash.clone())
+            else {
+                break;
+            };
             debug!(
                 "🏎️ Fast forwarding to next Prepare with prepare {:?}",
                 prepare
             );
-            // FIXME? In theory, we could have a stackoverflow if we need to catchup a lot of prepares
-            // Note: If we want to vote on the passed proposal even if it's too late,
-            // we can just remove the "return" here and continue.
-            return self.on_prepare(prepare.0, prepare.1, prepare.2, prepare.3);
+            (sender, consensus_proposal, ticket, view) = prepare;
+            self.bft_round_state.current_proposal = Some(consensus_proposal.clone());
+            cp_hash = consensus_proposal.hashed();
+            follower_state!(self).buffered_prepares.push((
+                sender.clone(),
+                consensus_proposal.clone(),
+                ticket.clone(),
+                view,
+            ));
+            self.record_prepare_cache_sizes();
+        }
         }
 
         if self.is_in_timeout_phase() {
