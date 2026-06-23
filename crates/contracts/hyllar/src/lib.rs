@@ -126,9 +126,10 @@ impl ERC20 for Hyllar {
             return Err("Insufficient balance".to_string());
         }
 
-        *self.balances.entry(sender.to_string()).or_insert(0) -= amount;
-        *self.balances.entry(recipient.to_string()).or_insert(0) += amount;
-
+        let sender_entry = self.balances.entry(sender.to_string()).or_insert(0);
+        *sender_entry = sender_entry.checked_sub(amount).ok_or("Insufficient balance")?;
+        let recipient_entry = self.balances.entry(recipient.to_string()).or_insert(0);
+        *recipient_entry = recipient_entry.checked_add(amount).ok_or("Balance overflow")?;
         Ok(())
     }
 
@@ -151,11 +152,12 @@ impl ERC20 for Hyllar {
             return Err("Insufficient balance".to_string());
         }
 
-        *self.balances.entry(owner.to_string()).or_insert(0) -= amount;
-        *self.balances.entry(recipient.to_string()).or_insert(0) += amount;
-
+        let owner_entry = self.balances.entry(owner.to_string()).or_insert(0);
+        *owner_entry = owner_entry.checked_sub(amount).ok_or("Insufficient balance")?;
+        let recipient_entry_tf = self.balances.entry(recipient.to_string()).or_insert(0);
+        *recipient_entry_tf = recipient_entry_tf.checked_add(amount).ok_or("Balance overflow")?;
         // Decrease the allowance
-        let new_allowance = allowance - amount;
+        let new_allowance = allowance.checked_sub(amount).ok_or("Allowance underflow")?;
         self.allowances
             .insert((owner.to_string(), spender.to_string()), new_allowance);
 
