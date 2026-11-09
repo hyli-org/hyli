@@ -1,4 +1,4 @@
-/*! Axios v1.21.0 Copyright (c) 2026 Matt Zabriskie and contributors */
+/*! Axios v1.21.1 Copyright (c) 2026 Matt Zabriskie and contributors */
 (function (global, factory) {
   typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory() :
   typeof define === 'function' && define.amd ? define(factory) :
@@ -427,15 +427,15 @@
   function _toConsumableArray(r) {
     return _arrayWithoutHoles(r) || _iterableToArray(r) || _unsupportedIterableToArray(r) || _nonIterableSpread();
   }
-  function _toPrimitive(t, r) {
+  function _toPrimitive(t, e) {
     if ("object" != typeof t || !t) return t;
-    var e = t[Symbol.toPrimitive];
-    if (void 0 !== e) {
-      var i = e.call(t, r);
+    var r;
+    if ("undefined" != typeof Symbol && void 0 !== (r = t[Symbol.toPrimitive])) {
+      var i = r.call(t, e);
       if ("object" != typeof i) return i;
       throw new TypeError("@@toPrimitive must return a primitive value.");
     }
-    return ("string" === r ? String : Number)(t);
+    return ("string" === e ? String : Number)(t);
   }
   function _toPropertyKey(t) {
     var i = _toPrimitive(t, "string");
@@ -4910,7 +4910,7 @@
     return estimateDataURLBytes(fragmentIndex === -1 ? url : url.slice(0, fragmentIndex), estimatePercentDecodedBase64Bytes, /; *base64[\t\n\f\r ]*$/i);
   }
 
-  var VERSION = "1.21.0";
+  var VERSION = "1.21.1";
 
   var DEFAULT_CHUNK_SIZE = 64 * 1024;
   var DEFAULT_REQUEST_OPTIONS = {
@@ -5674,18 +5674,34 @@
   }
 
   /**
-   * Milliseconds elapsed since `start`, floored at zero.
+   * Resolve the clock used to time adapter execution.
    *
-   * Wall-clock, to match the rest of the codebase (speedometer, throttle,
-   * AxiosTransformStream). A backwards clock adjustment mid-request would
-   * otherwise produce a negative duration, so the result is clamped.
+   * Prefers the monotonic `performance.now()` so wall-clock adjustments do not
+   * skew the measurement, and so frameworks that forbid reading the current
+   * time during prerendering (e.g. Next.js Cache Components) accept it. Falls
+   * back to `Date.now()` in runtimes without the High Resolution Time API.
    *
-   * @param {number} start Timestamp from `Date.now()`
+   * @returns {() => number} Millisecond clock
+   */
+  function resolveClock() {
+    return typeof performance !== 'undefined' && utils$1.isFunction(performance.now) ? function () {
+      return performance.now();
+    } : Date.now;
+  }
+
+  /**
+   * Whole milliseconds elapsed since `start`, floored at zero.
+   *
+   * Rounded so the value stays an integer as with `Date.now()`. The fallback
+   * wall clock can move backwards mid-request, so the result is clamped.
+   *
+   * @param {() => number} now Clock returned by `resolveClock()`
+   * @param {number} start Timestamp read from `now`
    *
    * @returns {number} Non-negative elapsed milliseconds
    */
-  function elapsedSince(start) {
-    return Math.max(0, Date.now() - start);
+  function elapsedSince(now, start) {
+    return Math.max(0, Math.round(now() - start));
   }
 
   /**
@@ -5709,10 +5725,11 @@
       config.headers.setContentType('application/x-www-form-urlencoded', false);
     }
     var adapter = adapters.getAdapter(config.adapter || defaults.adapter, config);
-    var start = Date.now();
+    var now = resolveClock();
+    var start = now();
     return adapter(config).then(function onAdapterResolution(response) {
       throwIfCancellationRequested(config);
-      response.duration = elapsedSince(start);
+      response.duration = elapsedSince(now, start);
 
       // Expose the current response on config so that transformResponse can
       // attach it to any AxiosError it throws (e.g. on JSON parse failure).
@@ -5731,7 +5748,7 @@
 
         // Transform response data
         if (reason && reason.response) {
-          reason.response.duration = elapsedSince(start);
+          reason.response.duration = elapsedSince(now, start);
           config.response = reason.response;
           try {
             reason.response.data = transformData.call(config, config.transformResponse, reason.response);
